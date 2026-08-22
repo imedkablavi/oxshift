@@ -8,6 +8,19 @@ import numpy as np
 from .voices import get_preset
 
 
+DEFAULT_EFFECT_ORDER = (
+    "filter",
+    "pitch",
+    "timbre",
+    "drive",
+    "modulation",
+    "tremolo",
+    "echo",
+    "compressor",
+)
+VALID_EFFECTS = frozenset(DEFAULT_EFFECT_ORDER)
+
+
 @dataclass(slots=True)
 class DSPSettings:
     preset: str = "Clean"
@@ -24,10 +37,12 @@ class DSPSettings:
     compressor: float | None = None
     pitch_semitones: float | None = None
     formant_color: float | None = None
+    effect_order: tuple[str, ...] | None = None
+    disabled_effects: tuple[str, ...] = ()
 
 
 class VoiceDSP:
-    """Allocation-conscious real-time DSP rack used by OxShift's local mode."""
+    """Allocation-conscious realtime DSP rack with a configurable VoiceLab chain."""
 
     def __init__(self, sample_rate: float, channels: int = 1) -> None:
         self.sample_rate = float(sample_rate)
@@ -96,12 +111,7 @@ class VoiceDSP:
         try:
             self._pitch.semitones = semitones
             channels_first = np.ascontiguousarray(x.T, dtype=np.float32)
-            shifted = self._pitch.process(
-                channels_first,
-                self.sample_rate,
-                buffer_size=max(256, x.shape[0]),
-                reset=False,
-            )
+            shifted = self._pitch.process(channels_first, self.sample_rate, buffer_size=max(256, x.shape[0]), reset=False)
             shifted = np.asarray(shifted, dtype=np.float32)
             if shifted.ndim == 1:
                 shifted = shifted[None, :]
@@ -113,12 +123,6 @@ class VoiceDSP:
         return x
 
     def _formant_color(self, x: np.ndarray, amount: float) -> np.ndarray:
-        """Low-cost spectral-envelope color control.
-
-        This is intentionally labelled as an experimental timbre/formant-color control in
-        the UI; it is not a full independent formant shifter. Positive values emphasize
-        articulation, negative values darken the spectral envelope.
-        """
         amount = float(np.clip(amount, -1.0, 1.0))
         if abs(amount) < 0.001:
             return x
@@ -126,7 +130,7 @@ class VoiceDSP:
         if amount > 0:
             high = x - low
             return (x + high * (0.9 * amount)).astype(np.float32, copy=False)
-        dark = (-amount)
+        dark = -amount
         return (x * (1.0 - 0.55 * dark) + low * (0.55 * dark)).astype(np.float32, copy=False)
 
     def _ring_mod(self, x: np.ndarray, hz: float) -> np.ndarray:
@@ -176,6 +180,19 @@ class VoiceDSP:
         compressed_mag = mag - over + (over / ratio)
         return (np.sign(x) * compressed_mag).astype(np.float32, copy=False)
 
+    @staticmethod
+    def _validated_chain(order: tuple[str, ...] | None, disabled: tuple[str, ...]) -> tuple[str, ...]:
+        source = order or DEFAULT_EFFECT_ORDER
+        result: list[str] = []
+        disabled_set = {name for name in disabled if name in VALID_EFFECTS}
+        for name in source:
+            if name in VALID_EFFECTS and name not in disabled_set and name not in result:
+                result.append(name)
+        for name in DEFAULT_EFFECT_ORDER:
+            if name not in result and name not in disabled_set and name not in source:
+                result.append(name)
+        return tuple(result)
+
     def process(self, block: np.ndarray, settings: DSPSettings) -> np.ndarray:
         x = np.asarray(block, dtype=np.float32)
         if x.ndim == 1:
@@ -197,15 +214,24 @@ class VoiceDSP:
         pitch = preset.pitch_semitones if settings.pitch_semitones is None else settings.pitch_semitones
         formant_color = preset.formant_color if settings.formant_color is None else settings.formant_color
 
-        work = self._bandwidth(work, highpass, lowpass)
-        work = self._pitch_shift(work, pitch)
-        work = self._formant_color(work, formant_color)
-        if drive > 1.001:
-            work = np.tanh(work * drive).astype(np.float32, copy=False)
-        work = self._ring_mod(work, robot_hz)
-        work = self._tremolo(work, tremolo_hz)
-        work = self._echo_block(work, echo_ms, echo_mix)
-        work = self._compress(work, compressor)
+        chain = self._validated_chain(settings.effect_order, settings.disabled_effects)
+        for effect in chain:
+            if effect == "filter":
+                work = self._bandwidth(work, highpass, lowpass)
+            elif effect == "pitch":
+                work = self._pitch_shift(work, pitch)
+            elif effect == "timbre":
+                work = self._formant_color(work, formant_color)
+            elif effect == "drive" and drive > 1.001:
+                work = np.tanh(work * drive).astype(np.float32, copy=False)
+            elif effect == "modulation":
+                work = self._ring_mod(work, robot_hz)
+            elif effect == "tremolo":
+                work = self._tremolo(work, tremolo_hz)
+            elif effect == "echo":
+                work = self._echo_block(work, echo_ms, echo_mix)
+            elif effect == "compressor":
+                work = self._compress(work, compressor)
 
         gain = self._db_to_amp(settings.gain_db + preset.gain_db)
         wet = float(np.clip(settings.wet, 0.0, 1.0))
