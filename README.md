@@ -2,7 +2,7 @@
 
 OxShift is a local-first desktop voice studio that combines a real-time voice changer, a Soundpad-style soundboard/music player, virtual-microphone routing, and a foundation for local AI voice models.
 
-> Current status: **0.2 development preview**. The DSP voice changer and soundboard pipeline are functional foundations. Local AI model discovery is implemented, while full RVC inference remains intentionally adapter-gated until model compatibility and latency are validated.
+> Current status: **0.2 development preview**. The DSP voice changer and soundboard pipeline are functional foundations. Local AI model discovery and a non-blocking realtime VC runtime are implemented; model-specific RVC graph adapters remain compatibility-gated until their schemas and latency are validated.
 
 ## Highlights
 
@@ -42,17 +42,28 @@ Hotkey examples use pynput syntax:
 
 On Linux/Wayland, desktop security policy may prevent global key capture. OxShift keeps working even when the global-hotkey listener is unavailable.
 
-### Local AI model foundation
+### Local AI / RVC runtime
 
-The **AI Models** page can locally import and catalog:
+The **AI Models** page can locally import and catalog `.onnx`, `.pth`, and `.index` files. OxShift also has a realtime conversion stage that runs inference on a worker thread instead of inside the PortAudio callback.
 
-- `.onnx`
-- `.pth`
-- `.index`
+The runtime uses bounded input/output queues. If an AI backend is slower than the realtime budget, the callback never waits for it: old work can be dropped and OxShift can fall back to passthrough audio instead of freezing the device stream. Runtime statistics track submitted/converted blocks, dropped inputs, output underruns, inference time, peak time, and adapter errors.
 
-OxShift detects installed ONNX Runtime execution providers but does **not** blindly execute arbitrary imported graphs. RVC models require a compatible inference adapter, F0 extraction, feature extraction, retrieval/index handling, buffering, and hardware-specific latency tuning. That adapter is the next AI milestone.
+RVC bundles can use an `oxshift-rvc.json` manifest to describe required components instead of treating arbitrary ONNX graphs as interchangeable:
 
-This separation is intentional: model storage/discovery, the realtime audio engine, and inference backends should remain independently replaceable.
+```json
+{
+  "name": "My Voice",
+  "version": 1,
+  "sample_rate": 40000,
+  "synthesizer": "model.onnx",
+  "content_encoder": "contentvec.onnx",
+  "pitch_estimator": "rmvpe.onnx",
+  "index": "voice.index",
+  "speaker_id": 0
+}
+```
+
+The runtime validates bundle files before a model-specific adapter is allowed to execute them. Full RVC conversion still requires a validated content-encoder/F0/synthesizer adapter; imported models are not executed blindly.
 
 ## Linux quick start
 
@@ -90,22 +101,23 @@ For ONNX Runtime provider detection:
 pip install -r requirements-ai.txt
 ```
 
-GPU provider packages will be handled separately because CUDA/DirectML/CoreML availability is platform-specific.
+GPU provider packages are handled separately because CUDA/DirectML availability is platform-specific.
 
 ## Architecture
 
 ```text
 voxshift/
-├── audio_engine.py   # realtime microphone + soundboard mixer callback
+├── audio_engine.py   # realtime microphone + VC stage + soundboard mixer callback
 ├── dsp.py            # local DSP rack and realtime pitch backend
 ├── voices.py         # declarative voice preset catalog
 ├── soundboard.py     # persistent streaming soundboard/mixer
 ├── hotkeys.py        # optional global hotkey listener
 ├── ai_models.py      # local model registry and backend capability detection
+├── rvc_runtime.py    # async VC worker, bounded queues and RVC bundle manifests
 └── ui.py             # desktop dashboard and pages
 ```
 
-The realtime callback does not read media files from disk. Soundboard decoding/resampling runs on background threads and feeds bounded float32 queues consumed by the audio callback.
+The realtime callback does not read media files from disk or run slow AI inference synchronously. Soundboard decoding and voice conversion work happen outside the callback and feed bounded float32 queues.
 
 ## Privacy and responsible use
 
@@ -123,11 +135,10 @@ GitHub Actions runs the suite on supported Python versions for pull requests.
 
 Near-term engineering priorities:
 
-- Production RVC/ONNX inference adapter with validated model schemas
-- F0 backends (RMVPE/FCPE) and configurable retrieval index
-- CPU/CUDA/DirectML execution profiles
-- Real end-to-end latency measurement
-- Soundboard waveform, trim, fade-in/fade-out, playlists and folders
+- Validated ONNX adapters for ContentVec/HubERT + RMVPE/FCPE + RVC synthesizer graphs
+- CPU/CUDA/DirectML execution profiles and model warm-up
+- Real end-to-end latency measurement and adaptive chunk sizing
+- Soundboard waveform editor, trim, fade-in/fade-out, playlists and folders
 - Per-sound output/monitor routing
 - Native Windows virtual-audio setup guidance/automation where legally and technically appropriate
 - Settings migration and crash-safe persistence

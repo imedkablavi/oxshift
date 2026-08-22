@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
@@ -35,6 +35,8 @@ class SoundItem:
     loop: bool = False
     trim_start: float = 0.0
     trim_end: float = 0.0
+    fade_in: float = 0.0
+    fade_out: float = 0.0
 
 
 @dataclass(slots=True)
@@ -86,6 +88,20 @@ class _PlaybackSession:
         else:
             self.pause_event.clear()
 
+    def _apply_fades(self, mono: np.ndarray, block_start_frame: int, clip_start_frame: int, clip_end_frame: int) -> np.ndarray:
+        fade_in_frames = max(0, int(float(self.item.fade_in) * self.sample_rate))
+        fade_out_frames = max(0, int(float(self.item.fade_out) * self.sample_rate))
+        if fade_in_frames == 0 and fade_out_frames == 0:
+            return mono
+
+        frames = block_start_frame + np.arange(len(mono), dtype=np.float32)
+        gain = np.ones(len(mono), dtype=np.float32)
+        if fade_in_frames > 0:
+            gain = np.minimum(gain, np.clip((frames - clip_start_frame) / fade_in_frames, 0.0, 1.0))
+        if fade_out_frames > 0 and clip_end_frame > clip_start_frame:
+            gain = np.minimum(gain, np.clip((clip_end_frame - frames) / fade_out_frames, 0.0, 1.0))
+        return (mono * gain).astype(np.float32, copy=False)
+
     def _worker(self) -> None:
         try:
             from pedalboard.io import AudioFile
@@ -96,11 +112,17 @@ class _PlaybackSession:
 
             while not self.stop_event.is_set():
                 with AudioFile(str(path)).resampled_to(self.sample_rate) as audio:
-                    self.state.duration_seconds = float(audio.frames / self.sample_rate) if audio.frames else 0.0
-                    if self.item.trim_start > 0:
-                        audio.seek(int(self.item.trim_start * self.sample_rate))
+                    total_frames = int(audio.frames or 0)
+                    self.state.duration_seconds = float(total_frames / self.sample_rate) if total_frames else 0.0
+                    clip_start_frame = max(0, int(float(self.item.trim_start) * self.sample_rate))
+                    if clip_start_frame > 0:
+                        audio.seek(clip_start_frame)
 
-                    end_frame = int(self.item.trim_end * self.sample_rate) if self.item.trim_end > 0 else 0
+                    requested_end = int(float(self.item.trim_end) * self.sample_rate) if self.item.trim_end > 0 else 0
+                    clip_end_frame = min(requested_end, total_frames) if requested_end and total_frames else (requested_end or total_frames)
+                    if clip_end_frame and clip_end_frame < clip_start_frame:
+                        clip_end_frame = clip_start_frame
+
                     while not self.stop_event.is_set():
                         if self.pause_event.is_set():
                             time.sleep(0.02)
@@ -112,15 +134,16 @@ class _PlaybackSession:
                             time.sleep(0.01)
                             continue
 
-                        if end_frame and audio.tell() >= end_frame:
+                        if clip_end_frame and audio.tell() >= clip_end_frame:
                             break
 
                         frames_to_read = self.chunk_frames
-                        if end_frame:
-                            frames_to_read = min(frames_to_read, max(0, end_frame - audio.tell()))
+                        if clip_end_frame:
+                            frames_to_read = min(frames_to_read, max(0, clip_end_frame - audio.tell()))
                         if frames_to_read <= 0:
                             break
 
+                        block_start_frame = int(audio.tell())
                         block = audio.read(frames_to_read)
                         if block.size == 0:
                             break
@@ -129,6 +152,7 @@ class _PlaybackSession:
                         else:
                             mono = np.asarray(block, dtype=np.float32)
                         mono = np.ascontiguousarray(mono, dtype=np.float32)
+                        mono = self._apply_fades(mono, block_start_frame, clip_start_frame, clip_end_frame)
 
                         with self.lock:
                             self.queue.append(mono)
@@ -138,7 +162,7 @@ class _PlaybackSession:
                         break
 
             self.finished = True
-        except Exception as exc:  # audio decoder failures must never crash the realtime engine
+        except Exception as exc:  # decoder failures must never crash the realtime engine
             self.state.error = str(exc)
             self.finished = True
 
@@ -217,6 +241,10 @@ class SoundboardEngine:
                 continue
             for key, value in changes.items():
                 if hasattr(item, key):
+                    if key in {"volume"}:
+                        value = float(np.clip(float(value), 0.0, 2.0))
+                    elif key in {"trim_start", "trim_end", "fade_in", "fade_out"}:
+                        value = max(0.0, float(value))
                     setattr(item, key, value)
             self.save()
             return item
@@ -292,7 +320,7 @@ class SoundboardEngine:
     def save(self) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "version": 1,
+            "version": 2,
             "settings": asdict(self.settings),
             "items": [asdict(item) for item in self.items],
         }

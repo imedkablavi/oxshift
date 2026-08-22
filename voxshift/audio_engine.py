@@ -8,6 +8,7 @@ from typing import Callable
 import numpy as np
 
 from .dsp import DSPSettings, VoiceDSP
+from .rvc_runtime import RealtimeVoiceConverter
 from .soundboard import SoundboardEngine
 
 
@@ -22,6 +23,7 @@ class AudioEngine:
         self.last_status = "Stopped"
         self.on_status: Callable[[str], None] | None = None
         self.soundboard = SoundboardEngine(sample_rate=48000)
+        self.voice_converter = RealtimeVoiceConverter()
         self.sample_rate = 48000
         self.blocksize = 256
         self.callback_ms = 0.0
@@ -63,6 +65,8 @@ class AudioEngine:
         dsp = VoiceDSP(sample_rate=sample_rate, channels=1)
         self.pitch_backend = dsp.pitch_backend
         budget_ms = (blocksize / sample_rate) * 1000.0
+        if self.voice_converter.config.enabled and self.voice_converter.ready:
+            self.voice_converter.start()
 
         def callback(indata, outdata, frames, time_info, status):
             started = time.perf_counter()
@@ -75,7 +79,8 @@ class AudioEngine:
             with self._lock:
                 settings = self._settings
 
-            processed = dsp.process(mono, settings)
+            converted = self.voice_converter.process(mono)
+            processed = dsp.process(converted, settings)
             board = self.soundboard.mix(frames)
             self.soundboard_level = float(np.sqrt(np.mean(np.square(board), dtype=np.float64)))
 
@@ -119,6 +124,7 @@ class AudioEngine:
                 stream.stop()
             finally:
                 stream.close()
+        self.voice_converter.stop()
         self.soundboard.stop_all()
         self.input_level = 0.0
         self.output_level = 0.0
