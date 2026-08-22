@@ -5,6 +5,8 @@ import math
 
 import numpy as np
 
+from .voices import get_preset
+
 
 @dataclass(slots=True)
 class DSPSettings:
@@ -12,24 +14,43 @@ class DSPSettings:
     gain_db: float = 0.0
     wet: float = 1.0
     gate_db: float = -55.0
+    lowpass_hz: float | None = None
+    highpass_hz: float | None = None
+    drive: float | None = None
+    robot_hz: float | None = None
+    tremolo_hz: float | None = None
+    echo_ms: float | None = None
+    echo_mix: float | None = None
+    compressor: float | None = None
 
 
 class VoiceDSP:
-    """Small, callback-safe DSP chain for the MVP."""
+    """Allocation-conscious real-time DSP rack used by OxShift's local mode."""
 
     def __init__(self, sample_rate: float, channels: int = 1) -> None:
         self.sample_rate = float(sample_rate)
         self.channels = channels
-        self.phase = 0.0
-        self._radio_lp = np.zeros(channels, dtype=np.float32)
-        self._radio_hp = np.zeros(channels, dtype=np.float32)
-        self._anon_lp = np.zeros(channels, dtype=np.float32)
+        self.phase_robot = 0.0
+        self.phase_tremolo = 0.0
+        self._lp_state = np.zeros(channels, dtype=np.float32)
+        self._hp_lp_state = np.zeros(channels, dtype=np.float32)
+        self._echo = np.zeros((max(1, int(self.sample_rate * 0.8)), channels), dtype=np.float32)
+        self._echo_pos = 0
 
     @staticmethod
     def _db_to_amp(db: float) -> float:
         return float(10.0 ** (db / 20.0))
 
+    def reset(self) -> None:
+        self.phase_robot = 0.0
+        self.phase_tremolo = 0.0
+        self._lp_state.fill(0)
+        self._hp_lp_state.fill(0)
+        self._echo.fill(0)
+        self._echo_pos = 0
+
     def _one_pole_lowpass(self, x: np.ndarray, cutoff: float, state: np.ndarray) -> np.ndarray:
+        cutoff = float(np.clip(cutoff, 20.0, self.sample_rate * 0.45))
         dt = 1.0 / self.sample_rate
         rc = 1.0 / (2.0 * math.pi * cutoff)
         a = dt / (rc + dt)
@@ -41,49 +62,90 @@ class VoiceDSP:
         state[:] = s
         return y
 
-    def _radio(self, x: np.ndarray) -> np.ndarray:
-        low = self._one_pole_lowpass(x, 300.0, self._radio_hp)
-        hp = x - low
-        band = self._one_pole_lowpass(hp, 3400.0, self._radio_lp)
-        return np.tanh(band * 2.2).astype(np.float32, copy=False)
+    def _bandwidth(self, x: np.ndarray, highpass_hz: float, lowpass_hz: float) -> np.ndarray:
+        y = x
+        if highpass_hz > 25.0:
+            low = self._one_pole_lowpass(y, highpass_hz, self._hp_lp_state)
+            y = y - low
+        if lowpass_hz < self.sample_rate * 0.44:
+            y = self._one_pole_lowpass(y, lowpass_hz, self._lp_state)
+        return y
 
-    def _robot(self, x: np.ndarray) -> np.ndarray:
+    def _ring_mod(self, x: np.ndarray, hz: float) -> np.ndarray:
+        if hz <= 0.0:
+            return x
         n = x.shape[0]
-        omega = 2.0 * math.pi * 70.0 / self.sample_rate
-        phases = self.phase + omega * np.arange(n, dtype=np.float32)
+        omega = 2.0 * math.pi * hz / self.sample_rate
+        phases = self.phase_robot + omega * np.arange(n, dtype=np.float32)
         carrier = np.sin(phases)[:, None].astype(np.float32, copy=False)
-        self.phase = float((self.phase + omega * n) % (2.0 * math.pi))
+        self.phase_robot = float((self.phase_robot + omega * n) % (2.0 * math.pi))
         return (x * carrier).astype(np.float32, copy=False)
 
-    def _anonymous(self, x: np.ndarray) -> np.ndarray:
-        dark = self._one_pole_lowpass(x, 1700.0, self._anon_lp)
+    def _tremolo(self, x: np.ndarray, hz: float) -> np.ndarray:
+        if hz <= 0.0:
+            return x
         n = x.shape[0]
-        omega = 2.0 * math.pi * 38.0 / self.sample_rate
-        phases = self.phase + omega * np.arange(n, dtype=np.float32)
-        ring = np.sin(phases)[:, None].astype(np.float32, copy=False)
-        self.phase = float((self.phase + omega * n) % (2.0 * math.pi))
-        return np.tanh(dark * 1.8 + dark * ring * 0.28).astype(np.float32, copy=False)
+        omega = 2.0 * math.pi * hz / self.sample_rate
+        phases = self.phase_tremolo + omega * np.arange(n, dtype=np.float32)
+        lfo = (0.72 + 0.28 * np.sin(phases))[:, None].astype(np.float32, copy=False)
+        self.phase_tremolo = float((self.phase_tremolo + omega * n) % (2.0 * math.pi))
+        return (x * lfo).astype(np.float32, copy=False)
+
+    def _echo_block(self, x: np.ndarray, delay_ms: float, mix: float) -> np.ndarray:
+        mix = float(np.clip(mix, 0.0, 0.65))
+        if delay_ms <= 0.0 or mix <= 0.0:
+            return x
+        delay = int(np.clip(self.sample_rate * delay_ms / 1000.0, 1, len(self._echo) - 1))
+        out = np.empty_like(x)
+        for i in range(x.shape[0]):
+            read_pos = (self._echo_pos - delay) % len(self._echo)
+            delayed = self._echo[read_pos]
+            sample = x[i] + delayed * mix
+            out[i] = sample
+            self._echo[self._echo_pos] = x[i] + delayed * (mix * 0.32)
+            self._echo_pos = (self._echo_pos + 1) % len(self._echo)
+        return out
+
+    @staticmethod
+    def _compress(x: np.ndarray, amount: float) -> np.ndarray:
+        amount = float(np.clip(amount, 0.0, 1.0))
+        if amount <= 0.0:
+            return x
+        threshold = 0.72 - (0.45 * amount)
+        ratio = 1.0 + (7.0 * amount)
+        mag = np.abs(x)
+        over = np.maximum(mag - threshold, 0.0)
+        compressed_mag = mag - over + (over / ratio)
+        return (np.sign(x) * compressed_mag).astype(np.float32, copy=False)
 
     def process(self, block: np.ndarray, settings: DSPSettings) -> np.ndarray:
         x = np.asarray(block, dtype=np.float32)
         if x.ndim == 1:
             x = x[:, None]
         dry = x
+        preset = get_preset(settings.preset)
 
         gate = self._db_to_amp(settings.gate_db)
         work = np.where(np.abs(x) >= gate, x, 0.0).astype(np.float32, copy=False)
 
-        preset = settings.preset.lower()
-        if preset == "radio":
-            wet_signal = self._radio(work)
-        elif preset == "robot":
-            wet_signal = self._robot(work)
-        elif preset == "anonymous":
-            wet_signal = self._anonymous(work)
-        else:
-            wet_signal = work
+        highpass = preset.highpass_hz if settings.highpass_hz is None else settings.highpass_hz
+        lowpass = preset.lowpass_hz if settings.lowpass_hz is None else settings.lowpass_hz
+        drive = preset.drive if settings.drive is None else settings.drive
+        robot_hz = preset.robot_hz if settings.robot_hz is None else settings.robot_hz
+        tremolo_hz = preset.tremolo_hz if settings.tremolo_hz is None else settings.tremolo_hz
+        echo_ms = preset.echo_ms if settings.echo_ms is None else settings.echo_ms
+        echo_mix = preset.echo_mix if settings.echo_mix is None else settings.echo_mix
+        compressor = preset.compressor if settings.compressor is None else settings.compressor
 
-        gain = self._db_to_amp(settings.gain_db)
+        work = self._bandwidth(work, highpass, lowpass)
+        if drive > 1.001:
+            work = np.tanh(work * drive).astype(np.float32, copy=False)
+        work = self._ring_mod(work, robot_hz)
+        work = self._tremolo(work, tremolo_hz)
+        work = self._echo_block(work, echo_ms, echo_mix)
+        work = self._compress(work, compressor)
+
+        gain = self._db_to_amp(settings.gain_db + preset.gain_db)
         wet = float(np.clip(settings.wet, 0.0, 1.0))
-        out = ((dry * (1.0 - wet)) + (wet_signal * wet)) * gain
+        out = ((dry * (1.0 - wet)) + (work * wet)) * gain
         return np.clip(out, -1.0, 1.0).astype(np.float32, copy=False)
