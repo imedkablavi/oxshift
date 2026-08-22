@@ -22,6 +22,8 @@ class DSPSettings:
     echo_ms: float | None = None
     echo_mix: float | None = None
     compressor: float | None = None
+    pitch_semitones: float | None = None
+    formant_color: float | None = None
 
 
 class VoiceDSP:
@@ -34,8 +36,18 @@ class VoiceDSP:
         self.phase_tremolo = 0.0
         self._lp_state = np.zeros(channels, dtype=np.float32)
         self._hp_lp_state = np.zeros(channels, dtype=np.float32)
+        self._color_lp_state = np.zeros(channels, dtype=np.float32)
         self._echo = np.zeros((max(1, int(self.sample_rate * 0.8)), channels), dtype=np.float32)
         self._echo_pos = 0
+        self._pitch = None
+        self.pitch_backend = "disabled"
+        try:
+            from pedalboard import PitchShift
+
+            self._pitch = PitchShift(semitones=0.0)
+            self.pitch_backend = "pedalboard/rubberband"
+        except Exception:
+            self._pitch = None
 
     @staticmethod
     def _db_to_amp(db: float) -> float:
@@ -46,8 +58,14 @@ class VoiceDSP:
         self.phase_tremolo = 0.0
         self._lp_state.fill(0)
         self._hp_lp_state.fill(0)
+        self._color_lp_state.fill(0)
         self._echo.fill(0)
         self._echo_pos = 0
+        if self._pitch is not None:
+            try:
+                self._pitch.reset()
+            except Exception:
+                pass
 
     def _one_pole_lowpass(self, x: np.ndarray, cutoff: float, state: np.ndarray) -> np.ndarray:
         cutoff = float(np.clip(cutoff, 20.0, self.sample_rate * 0.45))
@@ -70,6 +88,46 @@ class VoiceDSP:
         if lowpass_hz < self.sample_rate * 0.44:
             y = self._one_pole_lowpass(y, lowpass_hz, self._lp_state)
         return y
+
+    def _pitch_shift(self, x: np.ndarray, semitones: float) -> np.ndarray:
+        semitones = float(np.clip(semitones, -12.0, 12.0))
+        if abs(semitones) < 0.01 or self._pitch is None:
+            return x
+        try:
+            self._pitch.semitones = semitones
+            channels_first = np.ascontiguousarray(x.T, dtype=np.float32)
+            shifted = self._pitch.process(
+                channels_first,
+                self.sample_rate,
+                buffer_size=max(256, x.shape[0]),
+                reset=False,
+            )
+            shifted = np.asarray(shifted, dtype=np.float32)
+            if shifted.ndim == 1:
+                shifted = shifted[None, :]
+            shifted = shifted.T
+            if shifted.shape == x.shape:
+                return shifted
+        except Exception:
+            pass
+        return x
+
+    def _formant_color(self, x: np.ndarray, amount: float) -> np.ndarray:
+        """Low-cost spectral-envelope color control.
+
+        This is intentionally labelled as an experimental timbre/formant-color control in
+        the UI; it is not a full independent formant shifter. Positive values emphasize
+        articulation, negative values darken the spectral envelope.
+        """
+        amount = float(np.clip(amount, -1.0, 1.0))
+        if abs(amount) < 0.001:
+            return x
+        low = self._one_pole_lowpass(x, 1200.0, self._color_lp_state)
+        if amount > 0:
+            high = x - low
+            return (x + high * (0.9 * amount)).astype(np.float32, copy=False)
+        dark = (-amount)
+        return (x * (1.0 - 0.55 * dark) + low * (0.55 * dark)).astype(np.float32, copy=False)
 
     def _ring_mod(self, x: np.ndarray, hz: float) -> np.ndarray:
         if hz <= 0.0:
@@ -136,8 +194,12 @@ class VoiceDSP:
         echo_ms = preset.echo_ms if settings.echo_ms is None else settings.echo_ms
         echo_mix = preset.echo_mix if settings.echo_mix is None else settings.echo_mix
         compressor = preset.compressor if settings.compressor is None else settings.compressor
+        pitch = preset.pitch_semitones if settings.pitch_semitones is None else settings.pitch_semitones
+        formant_color = preset.formant_color if settings.formant_color is None else settings.formant_color
 
         work = self._bandwidth(work, highpass, lowpass)
+        work = self._pitch_shift(work, pitch)
+        work = self._formant_color(work, formant_color)
         if drive > 1.001:
             work = np.tanh(work * drive).astype(np.float32, copy=False)
         work = self._ring_mod(work, robot_hz)
