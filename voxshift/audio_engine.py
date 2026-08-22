@@ -7,6 +7,7 @@ from typing import Callable
 
 import numpy as np
 
+from .cleanup import CleanupSettings, MicCleanup
 from .dsp import DSPSettings, VoiceDSP
 from .recorder import OutputRecorder
 from .rvc_runtime import RealtimeVoiceConverter
@@ -17,8 +18,10 @@ class AudioEngine:
     def __init__(self) -> None:
         self._stream = None
         self._settings = DSPSettings()
+        self._cleanup_settings = CleanupSettings()
         self._lock = Lock()
         self.input_level = 0.0
+        self.cleaned_level = 0.0
         self.output_level = 0.0
         self.soundboard_level = 0.0
         self.last_status = "Stopped"
@@ -32,6 +35,8 @@ class AudioEngine:
         self.callback_peak_ms = 0.0
         self.xruns = 0
         self.pitch_backend = "unknown"
+        self.cleanup_gain_db = 0.0
+        self.noise_floor = 0.0
 
     @staticmethod
     def devices():
@@ -41,6 +46,11 @@ class AudioEngine:
     def update_settings(self, **kwargs) -> None:
         with self._lock:
             self._settings = replace(self._settings, **kwargs)
+
+    def update_cleanup(self, **kwargs) -> None:
+        with self._lock:
+            self._cleanup_settings = replace(self._cleanup_settings, **kwargs)
+            self._cleanup_settings.sanitize()
 
     def _set_status(self, text: str) -> None:
         self.last_status = text
@@ -77,6 +87,7 @@ class AudioEngine:
             self.soundboard.stop_all()
             self.soundboard.sample_rate = self.sample_rate
         self.recorder.sample_rate = self.sample_rate
+        cleanup = MicCleanup(sample_rate=self.sample_rate)
         dsp = VoiceDSP(sample_rate=sample_rate, channels=1)
         self.pitch_backend = dsp.pitch_backend
         budget_ms = (blocksize / sample_rate) * 1000.0
@@ -93,8 +104,14 @@ class AudioEngine:
             self.input_level = float(np.sqrt(np.mean(np.square(mono), dtype=np.float64)))
             with self._lock:
                 settings = self._settings
+                cleanup_settings = self._cleanup_settings
 
-            converted = self.voice_converter.process(mono)
+            cleaned = cleanup.process(mono, cleanup_settings)
+            self.cleaned_level = cleanup.output_rms
+            self.cleanup_gain_db = cleanup.applied_gain_db
+            self.noise_floor = cleanup.noise_floor
+
+            converted = self.voice_converter.process(cleaned)
             processed = dsp.process(converted, settings)
             board = self.soundboard.mix(frames)
             self.soundboard_level = float(np.sqrt(np.mean(np.square(board), dtype=np.float64)))
@@ -145,6 +162,7 @@ class AudioEngine:
         self.voice_converter.stop()
         self.soundboard.stop_all()
         self.input_level = 0.0
+        self.cleaned_level = 0.0
         self.output_level = 0.0
         self.soundboard_level = 0.0
         self.callback_ms = 0.0

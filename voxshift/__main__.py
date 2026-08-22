@@ -1,11 +1,11 @@
 import tkinter as tk
 
-from .pro_ui import OxShiftStudioUI
+from .enhanced_ui import OxShiftEnhancedUI
 
 
 def main() -> None:
     root = tk.Tk()
-    OxShiftStudioUI(root)
+    OxShiftEnhancedUI(root)
     root.mainloop()
 
 
