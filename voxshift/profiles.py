@@ -26,11 +26,17 @@ class StudioProfile:
     gate_db: float = -55.0
     pitch_semitones: float = 0.0
     formant_color: float = 0.0
+    noise_suppression: float = 0.45
+    agc_enabled: bool = True
+    agc_target_dbfs: float = -18.0
+    agc_max_gain_db: float = 12.0
     soundboard_master: float = 0.85
     soundboard_duck_db: float = 0.0
     allow_overlap: bool = True
     sample_rate: int = 48000
     blocksize: int = 256
+    input_device_name: str = ""
+    output_device_name: str = ""
 
     def sanitize(self) -> None:
         self.name = (self.name or "Profile").strip()[:80]
@@ -39,14 +45,19 @@ class StudioProfile:
         self.gate_db = float(max(-90.0, min(-10.0, self.gate_db)))
         self.pitch_semitones = float(max(-12.0, min(12.0, self.pitch_semitones)))
         self.formant_color = float(max(-1.0, min(1.0, self.formant_color)))
+        self.noise_suppression = float(max(0.0, min(1.0, self.noise_suppression)))
+        self.agc_target_dbfs = float(max(-30.0, min(-8.0, self.agc_target_dbfs)))
+        self.agc_max_gain_db = float(max(0.0, min(24.0, self.agc_max_gain_db)))
         self.soundboard_master = float(max(0.0, min(1.5, self.soundboard_master)))
         self.soundboard_duck_db = float(max(0.0, min(36.0, self.soundboard_duck_db)))
         self.sample_rate = self.sample_rate if self.sample_rate in {44100, 48000, 96000} else 48000
         self.blocksize = self.blocksize if self.blocksize in {128, 256, 512, 1024} else 256
+        self.input_device_name = str(self.input_device_name or "")[:200]
+        self.output_device_name = str(self.output_device_name or "")[:200]
 
 
 class ProfileStore:
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (_config_dir() / "profiles.json")
@@ -108,11 +119,7 @@ class ProfileStore:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "version": self.VERSION,
-            "active_id": self.active_id,
-            "profiles": [asdict(item) for item in self.items],
-        }
+        payload = {"version": self.VERSION, "active_id": self.active_id, "profiles": [asdict(item) for item in self.items]}
         fd, raw_tmp = tempfile.mkstemp(prefix="profiles-", suffix=".tmp", dir=self.path.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
