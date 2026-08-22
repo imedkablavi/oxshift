@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from voxshift.dsp import DSPSettings, VoiceDSP
+from voxshift.voices import CATEGORIES, VOICE_PRESETS, get_preset
 
 
 class DSPTests(unittest.TestCase):
@@ -21,11 +22,22 @@ class DSPTests(unittest.TestCase):
         y = self.dsp.process(x, DSPSettings(gate_db=-50))
         self.assertTrue(np.allclose(y, 0.0))
 
-    def test_presets_are_finite(self):
-        for preset in ("Radio", "Robot", "Anonymous"):
-            y = self.dsp.process(self.x, DSPSettings(preset=preset))
-            self.assertTrue(np.isfinite(y).all(), preset)
-            self.assertEqual(y.shape, self.x.shape)
+    def test_all_presets_are_finite_and_bounded(self):
+        for preset in VOICE_PRESETS:
+            self.dsp.reset()
+            y = self.dsp.process(self.x, DSPSettings(preset=preset.name))
+            self.assertTrue(np.isfinite(y).all(), preset.name)
+            self.assertEqual(y.shape, self.x.shape, preset.name)
+            self.assertLessEqual(float(np.max(np.abs(y))), 1.0, preset.name)
+
+    def test_preset_catalog_is_unique(self):
+        names = [preset.name for preset in VOICE_PRESETS]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertGreaterEqual(len(VOICE_PRESETS), 12)
+        self.assertIn("All", CATEGORIES)
+
+    def test_unknown_preset_falls_back_to_clean(self):
+        self.assertEqual(get_preset("does-not-exist").name, "Clean")
 
     def test_gain_clips_safely(self):
         y = self.dsp.process(np.ones((128, 1), dtype=np.float32), DSPSettings(gain_db=18))
