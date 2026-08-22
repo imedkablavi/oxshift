@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oxshift"
+version = "0.1.0"
+description = "Local-first real-time voice changer MVP"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=2.0,<3",
+  "sounddevice>=0.5,<1",
+]
+
+[project.scripts]
+oxshift = "voxshift.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["voxshift*"]
