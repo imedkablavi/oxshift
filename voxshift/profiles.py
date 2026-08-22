@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import os
 from pathlib import Path
 import tempfile
 import uuid
+
+from .dsp import DEFAULT_EFFECT_ORDER, VALID_EFFECTS
 
 
 def _config_dir() -> Path:
@@ -30,6 +32,8 @@ class StudioProfile:
     agc_enabled: bool = True
     agc_target_dbfs: float = -18.0
     agc_max_gain_db: float = 12.0
+    effect_order: list[str] = field(default_factory=lambda: list(DEFAULT_EFFECT_ORDER))
+    disabled_effects: list[str] = field(default_factory=list)
     soundboard_master: float = 0.85
     soundboard_duck_db: float = 0.0
     allow_overlap: bool = True
@@ -48,6 +52,15 @@ class StudioProfile:
         self.noise_suppression = float(max(0.0, min(1.0, self.noise_suppression)))
         self.agc_target_dbfs = float(max(-30.0, min(-8.0, self.agc_target_dbfs)))
         self.agc_max_gain_db = float(max(0.0, min(24.0, self.agc_max_gain_db)))
+        clean_order: list[str] = []
+        for name in list(self.effect_order or []):
+            if name in VALID_EFFECTS and name not in clean_order:
+                clean_order.append(name)
+        for name in DEFAULT_EFFECT_ORDER:
+            if name not in clean_order:
+                clean_order.append(name)
+        self.effect_order = clean_order
+        self.disabled_effects = [name for name in dict.fromkeys(self.disabled_effects or []) if name in VALID_EFFECTS]
         self.soundboard_master = float(max(0.0, min(1.5, self.soundboard_master)))
         self.soundboard_duck_db = float(max(0.0, min(36.0, self.soundboard_duck_db)))
         self.sample_rate = self.sample_rate if self.sample_rate in {44100, 48000, 96000} else 48000
@@ -57,7 +70,7 @@ class StudioProfile:
 
 
 class ProfileStore:
-    VERSION = 2
+    VERSION = 3
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (_config_dir() / "profiles.json")
