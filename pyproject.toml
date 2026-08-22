@@ -4,13 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oxshift"
-version = "0.1.0"
-description = "Local-first real-time voice changer MVP"
+version = "0.2.0"
+description = "Local-first real-time voice changer, soundboard and voice studio"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=2.0,<3",
   "sounddevice>=0.5,<1",
+  "pedalboard>=0.9.24,<1",
+  "pynput>=1.7,<2",
+]
+
+[project.optional-dependencies]
+ai = [
+  "onnxruntime>=1.20,<2",
+]
+dev = [
+  "pytest>=8,<9",
 ]
 
 [project.scripts]
