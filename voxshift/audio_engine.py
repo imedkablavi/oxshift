@@ -8,6 +8,7 @@ from typing import Callable
 import numpy as np
 
 from .dsp import DSPSettings, VoiceDSP
+from .recorder import OutputRecorder
 from .rvc_runtime import RealtimeVoiceConverter
 from .soundboard import SoundboardEngine
 
@@ -24,6 +25,7 @@ class AudioEngine:
         self.on_status: Callable[[str], None] | None = None
         self.soundboard = SoundboardEngine(sample_rate=48000)
         self.voice_converter = RealtimeVoiceConverter()
+        self.recorder = OutputRecorder(sample_rate=48000)
         self.sample_rate = 48000
         self.blocksize = 256
         self.callback_ms = 0.0
@@ -45,6 +47,12 @@ class AudioEngine:
         if self.on_status:
             self.on_status(text)
 
+    def start_recording(self, path: str) -> bool:
+        return self.recorder.start(path, sample_rate=self.sample_rate)
+
+    def stop_recording(self):
+        return self.recorder.stop()
+
     def start(
         self,
         input_device: int | None,
@@ -54,14 +62,21 @@ class AudioEngine:
     ) -> None:
         if self._stream is not None:
             return
+        if sample_rate not in {44100, 48000, 96000}:
+            raise ValueError("sample_rate must be 44100, 48000 or 96000")
+        if blocksize not in {128, 256, 512, 1024}:
+            raise ValueError("blocksize must be 128, 256, 512 or 1024")
 
         import sounddevice as sd
 
         self.sample_rate = int(sample_rate)
         self.blocksize = int(blocksize)
+        self.xruns = 0
+        self.callback_peak_ms = 0.0
         if self.soundboard.sample_rate != self.sample_rate:
             self.soundboard.stop_all()
             self.soundboard.sample_rate = self.sample_rate
+        self.recorder.sample_rate = self.sample_rate
         dsp = VoiceDSP(sample_rate=sample_rate, channels=1)
         self.pitch_backend = dsp.pitch_backend
         budget_ms = (blocksize / sample_rate) * 1000.0
@@ -90,6 +105,8 @@ class AudioEngine:
 
             final = np.clip(processed + board, -1.0, 1.0).astype(np.float32, copy=False)
             self.output_level = float(np.sqrt(np.mean(np.square(final), dtype=np.float64)))
+            self.recorder.push(final)
+
             if outdata.shape[1] == 1:
                 outdata[:] = final
             else:
@@ -124,6 +141,7 @@ class AudioEngine:
                 stream.stop()
             finally:
                 stream.close()
+        self.recorder.stop()
         self.voice_converter.stop()
         self.soundboard.stop_all()
         self.input_level = 0.0
