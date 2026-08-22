@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from voxshift.dsp import DSPSettings, VoiceDSP
+from voxshift.dsp import DEFAULT_EFFECT_ORDER, DSPSettings, VoiceDSP
 from voxshift.voices import CATEGORIES, VOICE_PRESETS, get_preset
 
 
@@ -34,13 +34,30 @@ class DSPTests(unittest.TestCase):
     def test_pitch_and_formant_color_are_safe(self):
         for pitch in (-12.0, -4.0, 0.0, 4.0, 12.0):
             self.dsp.reset()
-            y = self.dsp.process(
-                self.x,
-                DSPSettings(pitch_semitones=pitch, formant_color=0.35),
-            )
+            y = self.dsp.process(self.x, DSPSettings(pitch_semitones=pitch, formant_color=0.35))
             self.assertEqual(y.shape, self.x.shape)
             self.assertTrue(np.isfinite(y).all())
             self.assertLessEqual(float(np.max(np.abs(y))), 1.0)
+
+    def test_effect_chain_can_be_reordered_and_bypassed(self):
+        reversed_order = tuple(reversed(DEFAULT_EFFECT_ORDER))
+        y = self.dsp.process(
+            self.x,
+            DSPSettings(
+                preset="Cyber",
+                effect_order=reversed_order,
+                disabled_effects=("echo", "tremolo"),
+            ),
+        )
+        self.assertEqual(y.shape, self.x.shape)
+        self.assertTrue(np.isfinite(y).all())
+        self.assertLessEqual(float(np.max(np.abs(y))), 1.0)
+
+    def test_invalid_chain_entries_are_ignored(self):
+        chain = self.dsp._validated_chain(("pitch", "made-up", "pitch"), ("filter", "invalid"))
+        self.assertEqual(chain.count("pitch"), 1)
+        self.assertNotIn("made-up", chain)
+        self.assertNotIn("filter", chain)
 
     def test_preset_catalog_is_unique(self):
         names = [preset.name for preset in VOICE_PRESETS]
