@@ -12,13 +12,19 @@ class SoundboardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.old_xdg = os.environ.get("XDG_CONFIG_HOME")
+        self.old_localappdata = os.environ.get("LOCALAPPDATA")
         os.environ["XDG_CONFIG_HOME"] = self.temp.name
+        os.environ["LOCALAPPDATA"] = self.temp.name
 
     def tearDown(self):
         if self.old_xdg is None:
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:
             os.environ["XDG_CONFIG_HOME"] = self.old_xdg
+        if self.old_localappdata is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = self.old_localappdata
         self.temp.cleanup()
 
     def _add_dummy(self):
