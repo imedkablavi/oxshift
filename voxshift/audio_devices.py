@@ -73,3 +73,41 @@ def resolve_device_index(
     if identity.index is not None and 0 <= identity.index < len(rows) and usable(rows[identity.index]):
         return identity.index
     return None
+
+
+def preflight_stream_format(
+    sounddevice_module,
+    *,
+    input_device: int | None,
+    output_device: int | None,
+    sample_rate: int,
+) -> None:
+    """Check the selected mono float32 route before a realtime stream is opened.
+
+    PortAudio errors can otherwise surface as opaque host/backend messages after Start. This
+    helper runs on the caller/UI thread before any callback exists and annotates which side of
+    the route rejected the requested format.
+    """
+    try:
+        sounddevice_module.check_input_settings(
+            device=input_device,
+            channels=1,
+            dtype="float32",
+            samplerate=int(sample_rate),
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"input microphone does not support mono float32 at {int(sample_rate)} Hz: {exc}"
+        ) from exc
+
+    try:
+        sounddevice_module.check_output_settings(
+            device=output_device,
+            channels=1,
+            dtype="float32",
+            samplerate=int(sample_rate),
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"output/virtual route does not support mono float32 at {int(sample_rate)} Hz: {exc}"
+        ) from exc
