@@ -50,7 +50,7 @@ jobs:
           ) | Out-Null
           if ($errors.Count -gt 0) { $errors | Format-List; exit 1 }
       - name: Compile Python sources
-        run: python -m compileall -q voxshift scripts tests
+        run: python -m compileall -q voxshift scripts tests packaging/launcher.py
       - name: CLI import smoke
         run: python -m voxshift --help
       - name: Run tests
@@ -106,6 +106,13 @@ jobs:
           pip install "pyinstaller>=6.10,<7"
       - name: Build application
         run: pyinstaller --noconfirm --clean packaging/oxshift.spec
+      - name: Smoke packaged Linux launcher
+        if: runner.os == 'Linux'
+        run: dist/OxShift/OxShift --help
+      - name: Smoke packaged Windows launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& .\dist\OxShift\OxShift.exe --help'
       - name: Archive Linux build
         if: runner.os == 'Linux'
         run: tar -czf OxShift-linux-x86_64.tar.gz -C dist OxShift
@@ -113,12 +120,20 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path dist/OxShift/* -DestinationPath OxShift-windows-x86_64-portable.zip -Force
+      - name: Ensure Inno Setup 6
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+          }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup 6 compiler is unavailable" }
       - name: Build Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw "Inno Setup 6 is not installed on the runner" }
           & $iscc "/DAppVersion=0.3.0-alpha.1" packaging/windows/oxshift.iss
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
