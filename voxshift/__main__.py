@@ -4,7 +4,7 @@ import argparse
 import tkinter as tk
 from tkinter import messagebox
 
-from .alpha_ui import OxShiftAlphaUI
+from .product_ui import OxShiftProductUI
 from .rvc_adapters import ValidatedStreamingOnnxAdapter
 
 
@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     root = tk.Tk()
-    app = OxShiftAlphaUI(root)
+    app = OxShiftProductUI(root)
 
     if args.model_manifest:
         try:
