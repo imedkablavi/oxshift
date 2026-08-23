@@ -4,6 +4,7 @@ import argparse
 import tkinter as tk
 from tkinter import messagebox
 
+from .product_extras import install_product_extras
 from .product_ui import OxShiftProductUI
 from .rvc_adapters import ValidatedStreamingOnnxAdapter
 
@@ -27,6 +28,7 @@ def main() -> None:
     args = build_parser().parse_args()
     root = tk.Tk()
     app = OxShiftProductUI(root)
+    install_product_extras(app)
 
     if args.model_manifest:
         try:
