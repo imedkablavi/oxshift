@@ -10,6 +10,16 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 say() { printf '\n[OxShift] %s\n' "$*"; }
 warn() { printf '\n[OxShift warning] %s\n' "$*" >&2; }
 
+# Bazzite is Fedora Atomic/immutable. Never try to mutate its host image with dnf.
+if [[ -r /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  if [[ "${ID:-}" == "bazzite" || "${VARIANT_ID:-}" == *"bazzite"* || "${IMAGE_ID:-}" == *"bazzite"* ]]; then
+    say "Bazzite detected; switching to the atomic-safe Distrobox installer."
+    exec bash "$ROOT/scripts/install_bazzite.sh" "$@"
+  fi
+fi
+
 install_system_deps() {
   if [[ "${OXSHIFT_SKIP_SYSTEM_DEPS:-0}" == "1" ]]; then
     return
@@ -37,6 +47,7 @@ mkdir -p "$DEST"
 tar \
   --exclude='.git' \
   --exclude='.venv' \
+  --exclude='.venv-bazzite' \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   -C "$ROOT" -cf - . | tar -C "$DEST" -xf -
