@@ -10,8 +10,14 @@ from .pro_ui import GOOD, MUTED, PANEL, TEXT
 class AudioPerformanceUI:
     def __init__(self, app) -> None:
         self.app = app
-        self.sample_rate_var = tk.StringVar(master=app.root, value=str(app.profiles.active.sample_rate))
-        self.blocksize_var = tk.StringVar(master=app.root, value=str(app.profiles.active.blocksize))
+        active = app.profiles.active
+        # ProductUI applies the active profile before this extension is installed. Mirror its
+        # persisted format into the idle engine immediately so later autosave cannot overwrite
+        # a 44.1/96 kHz or non-default block-size profile with stale 48k/256 engine fields.
+        app.engine.sample_rate = int(active.sample_rate)
+        app.engine.blocksize = int(active.blocksize)
+        self.sample_rate_var = tk.StringVar(master=app.root, value=str(active.sample_rate))
+        self.blocksize_var = tk.StringVar(master=app.root, value=str(active.blocksize))
         self._original_apply_profile = app._apply_profile
         app._apply_profile = self._apply_profile_with_format
         self._install()
@@ -69,8 +75,8 @@ class AudioPerformanceUI:
 
     def _commit(self, rate: int, block: int, message: str) -> None:
         profile = self.app.profiles.update_active(sample_rate=rate, blocksize=block)
-        self.app.engine.sample_rate = rate
-        self.app.engine.blocksize = block
+        self.app.engine.sample_rate = profile.sample_rate
+        self.app.engine.blocksize = profile.blocksize
         self._refresh_status(message)
         if hasattr(self.app, "home_notice"):
             self.app.home_notice.configure(text=f"{message}. Start the engine to use it.", fg=GOOD)
@@ -85,6 +91,10 @@ class AudioPerformanceUI:
         self.status.configure(text=text)
 
     def _apply_profile_with_format(self, profile) -> None:
+        # Sync the idle engine first because AlphaUI's profile application may trigger UI
+        # synchronization/autosave paths that read engine.sample_rate/blocksize.
+        self.app.engine.sample_rate = int(profile.sample_rate)
+        self.app.engine.blocksize = int(profile.blocksize)
         self._original_apply_profile(profile)
         self.sample_rate_var.set(str(profile.sample_rate))
         self.blocksize_var.set(str(profile.blocksize))
