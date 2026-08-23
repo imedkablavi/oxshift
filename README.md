@@ -1,157 +1,264 @@
 # OxShift
 
-OxShift is a local-first desktop voice studio combining a real-time voice changer, Soundpad-style soundboard/music player, virtual-microphone routing, recording, studio profiles, diagnostics, and a foundation for local AI voice models.
+**Local-first real-time voice changer, soundboard and voice studio for Windows and Linux.**
 
-> Current status: **0.3 development preview**. The DSP voice changer, soundboard, recording path, profile system and non-blocking VC runtime are implemented as development foundations. Model-specific RVC graph adapters remain compatibility-gated until schemas and latency are validated.
+OxShift routes a physical microphone through low-latency DSP, microphone conditioning, optional validated local ONNX voice conversion, a streaming soundboard and a virtual-audio endpoint — without sending microphone audio to a cloud service.
 
-## Product-grade studio UI
+> **Status: 0.3.0 Alpha candidate.** Core DSP/soundboard/profile/recording paths are usable. Packaged builds, recovery and release hardening are being validated in the Alpha PR. Treat the current release line as pre-release software, not as a production audio driver.
 
-`python -m voxshift` now launches the newer **OxShift Studio** interface. The older UI remains in the repository during the transition.
+## Why OxShift
 
-The new shell separates the product into Home, Voices, Soundboard, Studio, Profiles, AI Models and Audio. Home includes live mic/soundboard/output meters, engine health, recording controls and privacy-safe diagnostics export.
+- **Local-first:** microphone audio, soundboard media and model files stay on the machine.
+- **Realtime-safe architecture:** disk decoding, WAV writes, model validation and AI inference do not block the PortAudio callback.
+- **Voice Studio:** pitch, timbre/color, gain, gate, filtering, saturation, modulation, delay and compression.
+- **Custom effects chain:** reorder or bypass individual DSP stages and save the result in profiles.
+- **Microphone conditioning:** adaptive built-in noise suppression/AGC plus an optional WebRTC backend when available.
+- **Soundboard:** WAV/MP3/OGG/FLAC/AIFF, waveform preview, trim, fades, loop, ducking, playlists and hotkeys.
+- **Recovery:** re-resolves audio devices by stable identity after USB/Bluetooth/virtual-device re-enumeration and retries outside the realtime thread.
+- **Validated local AI:** arbitrary imported models are quarantined; only allow-listed, checksummed ONNX schemas can become executable adapters.
+- **Windows + Linux packaging:** portable/application packages are built in CI; Windows installer setup is separated from kernel virtual-audio drivers.
 
-### Studio profiles
+## Product preview
 
-Profiles persist complete working setups instead of requiring users to rebuild settings every launch. A profile currently stores:
+The Alpha entry point launches **OxShift Studio** with Home, Voices, Soundboard, Studio, Profiles, AI Models and Audio pages. The older UI implementations remain in the repository only as a rollback/reference path and are no longer launched by `python -m voxshift`.
 
-- active voice preset
-- gain, wet/dry, noise gate
-- pitch and timbre/formant-color controls
-- soundboard master volume, ducking and overlap mode
-- sample rate and audio block size
+Real release screenshots and the short demo must be captured from an actual packaged Alpha build rather than generated mock UI. The capture specification is in [`docs/PRODUCT_METADATA.md`](docs/PRODUCT_METADATA.md). Until those assets are captured, screenshots are intentionally not faked in this README.
 
-Profile writes use an atomic temporary-file replacement and value validation so a partial write or invalid setting is less likely to corrupt startup state.
+## Install
 
-### Real-time output recorder
+### Windows Alpha
 
-OxShift can record the final mixed output — processed microphone plus Soundboard — to mono PCM16 WAV.
+For release builds, use either:
 
-Recording is non-blocking for the device callback: audio blocks are copied into a bounded queue and disk I/O is handled by a worker thread. If storage becomes too slow, dropped recorder blocks are counted instead of allowing file writes to stall microphone processing.
+- `OxShift-Setup-<version>-windows-x86_64.exe` — user-level installer, or
+- `OxShift-<version>-windows-x86_64-portable.zip` — portable build.
 
-### Diagnostics
+OxShift itself is an application, not a Windows kernel audio driver. To expose processed audio as a microphone, install a signed virtual-audio endpoint you trust (for example VB-CABLE/VoiceMeeter), then route:
 
-A support snapshot can be exported as JSON. It includes platform/audio-engine health such as sample rate, block size, callback timing, XRuns, VC inference timing and recorder drops. Device names, local paths, sound names and model filenames are intentionally excluded from the diagnostics payload.
-
-## Real-time voice studio
-
-- Live microphone capture/output through `sounddevice`
-- Voice preset library with categories and search
-- Clean, Broadcast, Deep, Bright, Anonymous, Robot, Android, Radio, Telephone, Intercom, Ghost, Cyber, Megaphone and Low-Fi presets
-- Gain, wet/dry mix, noise gate, filtering, saturation, modulation, delay and compression
-- Realtime pitch shifting through Spotify Pedalboard / Rubber Band when available
-- Experimental timbre/formant-color control (spectral-envelope coloring, **not** independent AI formant conversion)
-- Input/output/soundboard meters and callback telemetry
-- XRuns / over-budget callback counter
-
-## Soundboard / music player
-
-The Soundboard shares the virtual-microphone path with the voice changer, so callers can hear processed microphone audio and local media together.
-
-- WAV, MP3, OGG, FLAC and AIFF import
-- Streaming decode/resampling instead of loading long songs fully into RAM
-- Background decoding with bounded buffers
-- Play, pause, stop and stop-all
-- Overlap or one-at-a-time mode
-- Per-sound volume metadata and master volume
-- microphone ducking while media plays
-- loop, trim and non-destructive fade metadata
-- global hotkeys through `pynput` when supported by the desktop session
-- persistent local library
-
-On Linux/Wayland, desktop security policy may prevent global key capture. OxShift continues to work when the global-hotkey listener is unavailable.
-
-## Local AI / RVC runtime
-
-The AI Models page can catalog `.onnx`, `.pth` and `.index` files. OxShift also has a realtime conversion stage that runs inference on a worker thread instead of inside the PortAudio callback.
-
-The runtime uses bounded input/output queues. If an AI backend misses the realtime budget, the callback does not wait for it: work can be dropped and OxShift can fall back to passthrough audio instead of freezing the device stream. Runtime telemetry tracks dropped work, output underruns, inference time, peak time and adapter errors.
-
-RVC bundles can use an `oxshift-rvc.json` manifest rather than treating arbitrary ONNX graphs as interchangeable:
-
-```json
-{
-  "name": "My Voice",
-  "version": 1,
-  "sample_rate": 40000,
-  "synthesizer": "model.onnx",
-  "content_encoder": "contentvec.onnx",
-  "pitch_estimator": "rmvpe.onnx",
-  "index": "voice.index",
-  "speaker_id": 0
-}
+```text
+Physical microphone
+      ↓
+   OxShift
+      ↓
+CABLE Input / virtual playback endpoint
+      ↓
+CABLE Output / virtual recording endpoint
+      ↓
+Discord / OBS / Zoom / game chat
 ```
 
-Full RVC conversion still requires a validated content-encoder/F0/synthesizer adapter; imported models are not executed blindly.
+The installer ships a detection helper that checks for compatible endpoints but does **not** silently download or install a driver:
 
-## Linux quick start
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\setup_virtual_mic.ps1
+```
+
+See [`docs/WINDOWS_VIRTUAL_MIC.md`](docs/WINDOWS_VIRTUAL_MIC.md).
+
+### Linux Alpha
 
 Requirements: Python 3.10+, PipeWire/PulseAudio compatibility (`pactl`) and PortAudio.
 
 ```bash
-sudo apt install python3-venv portaudio19-dev pulseaudio-utils
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-./scripts/linux_virtual_mic.sh create
-python -m voxshift
+git clone https://github.com/imedkablavi/oxshift.git
+cd oxshift
+./scripts/install_linux.sh
 ```
 
-Select the physical microphone as input and the OxShift/VoxShift virtual sink as output. In Discord, OBS, Zoom or a game, select **VoxShift Microphone** / `voxshift_mic` as the microphone source.
+For Bazzite/Fedora Atomic, the installer automatically switches to the Distrobox-safe path instead of layering packages onto the immutable host.
 
-Remove Linux virtual devices with:
+To create/remove the PipeWire/Pulse virtual microphone manually:
 
 ```bash
+./scripts/linux_virtual_mic.sh create
 ./scripts/linux_virtual_mic.sh remove
 ```
 
-## Optional AI runtime
+Select your physical microphone as OxShift input and the OxShift/VoxShift virtual sink as output. In Discord/OBS/Zoom/game chat, select the paired `voxshift_mic` / **VoxShift Microphone** source.
+
+### Run from source
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+python -m voxshift
+```
+
+Optional ONNX runtime:
 
 ```bash
 pip install -r requirements-ai.txt
 ```
 
-GPU provider packages remain platform-specific because CUDA/DirectML availability differs by machine.
+GPU provider packages remain platform-specific; OxShift does not assume CUDA/DirectML is available.
 
-## Architecture
+## Realtime audio architecture
 
 ```text
-voxshift/
-├── audio_engine.py   # realtime microphone + VC + DSP + mixer callback
-├── dsp.py            # local DSP rack and realtime pitch backend
-├── voices.py         # declarative voice preset catalog
-├── soundboard.py     # persistent streaming soundboard/mixer
-├── recorder.py       # bounded-queue background WAV recorder
-├── profiles.py       # validated, atomic studio-profile persistence
-├── diagnostics.py    # privacy-safe engine health snapshots
-├── hotkeys.py        # optional global hotkey listener
-├── ai_models.py      # local model registry and provider detection
-├── rvc_runtime.py    # async VC worker and bundle validation
-├── pro_ui.py         # current OxShift Studio interface
-└── ui.py             # previous interface retained during transition
+Physical mic
+    │
+    ▼
+Mic conditioning ──► VC queue ──► local DSP chain ──┐
+                     │                               │
+                     └─ AI worker thread             ├─► final mix ─► virtual output
+                                                     │
+Soundboard decoder threads ─► bounded audio queues ──┘
+                                                     │
+                                                     └─► recorder queue ─► WAV writer thread
 ```
 
-The realtime callback does not perform media file reads, slow AI inference or recording disk writes synchronously.
+The callback is intentionally constrained:
 
-## Privacy and responsible use
+- no soundboard file reads/decoding;
+- no recording disk writes;
+- no model manifest/hash/graph validation;
+- no blocking AI inference;
+- no device re-enumeration/reopen work.
 
-OxShift is local-first. The application does not upload microphone audio, soundboard media or imported voice-model files. AI voice conversion should be used with models and voices you have the right and consent to use; the project is not intended for deceptive impersonation.
+When a device disappears, a recovery worker re-queries PortAudio devices and resolves the saved device name/host API. The callback fails closed to silence on an internal error rather than performing slow recovery work itself.
 
-## Tests
+## Voice Studio
+
+Built-in presets include Clean, Broadcast, Deep, Bright, Anonymous, Robot, Android, Radio, Telephone, Intercom, Ghost, Cyber, Megaphone and Low-Fi.
+
+The Studio page exposes:
+
+- pitch and timbre/formant-color controls;
+- wet/dry, gain and noise gate;
+- microphone noise suppression and AGC;
+- optional WebRTC processing when the backend is installed;
+- reorderable `filter → pitch → timbre → drive → modulation → tremolo → echo → compressor` chain;
+- per-stage bypass;
+- profile persistence for the complete chain and conditioning state.
+
+The timbre/formant-color control is spectral coloring, not independent neural formant conversion.
+
+## Soundboard
+
+The Soundboard mixes through the same final virtual-microphone path as processed speech.
+
+Features:
+
+- WAV, MP3, OGG, FLAC and AIFF import;
+- background streaming decode/resampling with bounded buffers;
+- play/pause/stop, overlap control and mic ducking;
+- waveform preview;
+- non-destructive trim start/end;
+- fade in/out and loop;
+- per-sound volume;
+- persistent named playlists;
+- global hotkeys where the desktop session permits them.
+
+On Linux/Wayland, compositor/security policy may block global key capture. OxShift remains usable without global hotkeys.
+
+## Local AI model trust boundary
+
+OxShift does **not** run arbitrary imported `.onnx` or `.pth` files.
+
+Raw ONNX/PTH imports are cataloged as **quarantined**. PyTorch `.pth` execution is disabled in Alpha because pickle-backed model loading is outside the trust boundary. An executable Alpha ONNX bundle must use an allow-listed schema and an `oxshift-model.json` manifest, stay inside its bundle directory, match a pinned SHA-256 digest and expose the exact expected ONNX inputs/outputs.
+
+Current allow-listed schema: `oxshift-rvc-stream-v1`.
+
+Example manifest:
+
+```json
+{
+  "name": "My validated voice",
+  "schema": "oxshift-rvc-stream-v1",
+  "version": 1,
+  "sample_rate": 48000,
+  "model": "model.onnx",
+  "sha256": "<64-character SHA-256 of model.onnx>"
+}
+```
+
+The `oxshift-rvc-stream-v1` graph contract is deliberately narrow:
+
+```text
+inputs:  audio [float32 mono block], pitch_shift [float32 scalar]
+output:  audio [same-length finite float32 mono block]
+```
+
+Real-world RVC repositories use several mutually incompatible ContentVec/HubERT/F0/synthesizer layouts. Those are not guessed or blindly executed; additional adapters must be implemented and validated schema-by-schema.
+
+## Profiles and diagnostics
+
+Profiles persist voice/DSP values, mic conditioning, effect order/bypass state, soundboard settings, sample rate/block size and preferred input/output device names.
+
+Diagnostics export intentionally excludes device names, usernames, sound paths and model filenames. It reports health data such as:
+
+- callback/peak timing and XRuns;
+- callback errors and recovery attempts/successes;
+- cleanup and pitch backends;
+- recorder queue drops;
+- VC inference time, queue drops and output underruns.
+
+## Benchmarks and stress tests
+
+Fast offline callback-budget benchmark:
+
+```bash
+python scripts/benchmark_audio.py --seconds 3 --json benchmark.json --markdown benchmark.md
+```
+
+Default multi-hour paced stress/leak test (2 hours):
+
+```bash
+python scripts/stress_audio.py --duration 7200 --json stress.json --markdown stress.md
+```
+
+CI runs a short accelerated stress smoke and uploads the benchmark/stress reports as artifacts. `.github/workflows/soak.yml` provides an explicit multi-hour workflow for release-candidate validation.
+
+These tests measure in-process processing budget/memory behavior. They do **not** replace physical-device round-trip latency and WASAPI/PipeWire XRun testing.
+
+## Builds and release integrity
+
+Pull requests build/test on Linux and Windows. Tagged releases rebuild the platform packages, generate `SHA256SUMS.txt`, then keyless-sign every distributable and the checksum file with Sigstore/Cosign using GitHub OIDC. The workflow verifies those signatures before publishing the release.
+
+Safe update design is documented in [`docs/UPDATES.md`](docs/UPDATES.md). Alpha does not enable unattended self-update before end-to-end checksum/signature/rollback verification exists.
+
+## Development and tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-GitHub Actions runs the suite on supported Python versions for pull requests.
+Important engineering files:
 
-## Next engineering milestones
+```text
+voxshift/
+├── alpha_ui.py          # default Alpha Studio shell
+├── pro_ui.py            # Studio foundation reused by Alpha
+├── audio_engine.py      # PortAudio callback + off-thread device recovery
+├── audio_devices.py     # stable device identity/re-resolution
+├── speech_processing.py # built-in/WebRTC mic conditioning
+├── dsp.py               # realtime DSP rack + configurable effects chain
+├── soundboard.py        # streaming soundboard/mixer
+├── playlists.py         # UI-side persistent playlist sequencing
+├── waveform.py          # bounded waveform preview generation
+├── recorder.py          # bounded-queue background WAV recorder
+├── profiles.py          # validated atomic profile persistence
+├── diagnostics.py       # privacy-safe health snapshots
+├── model_validation.py  # allow-list/checksum/ONNX graph trust boundary
+├── rvc_adapters.py      # validated streaming ONNX adapter
+└── rvc_runtime.py       # bounded async VC worker
+```
 
-- validated ONNX adapters for ContentVec/HubERT + RMVPE/FCPE + RVC synthesizer graphs
-- WebRTC/RNNoise-style noise suppression and automatic microphone conditioning
-- configurable, reorderable effect chains / VoiceLab-style custom voices
-- Soundboard waveform editor, folders/playlists and richer per-sound controls
-- device reconnect/recovery and saved device routing
-- native Windows virtual-audio setup and installer flow
-- Linux and Windows packaging, release artifacts and update strategy
-- long-running audio stress tests and latency benchmarks
+## Privacy and responsible use
+
+OxShift is local-first and does not upload microphone audio, soundboard media or imported voice models. Use voice models and voices only when you have the right and consent to do so. The project is not intended for deceptive impersonation.
+
+## Alpha release gates
+
+Before declaring `0.3.0-alpha.1` ready for broad testing, the project should have:
+
+- green Linux + Windows tests and packaged-build jobs;
+- a green callback-budget/stress smoke artifact;
+- a completed multi-hour paced soak;
+- physical PipeWire and Windows WASAPI/virtual-cable reconnect tests;
+- real screenshots + a short demo captured from packaged builds;
+- verification of checksum + Sigstore bundles from a test tag.
+
+See the release-readiness report in [`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md).
