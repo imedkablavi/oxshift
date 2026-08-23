@@ -11,7 +11,9 @@ class PlaylistTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.old_xdg = os.environ.get("XDG_CONFIG_HOME")
+        self.old_localappdata = os.environ.get("LOCALAPPDATA")
         os.environ["XDG_CONFIG_HOME"] = self.temp.name
+        os.environ["LOCALAPPDATA"] = self.temp.name
         self.audio = Path(self.temp.name) / "effect.wav"
         self.audio.write_bytes(b"catalog-only")
         self.board = SoundboardEngine(48000)
@@ -22,6 +24,10 @@ class PlaylistTests(unittest.TestCase):
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:
             os.environ["XDG_CONFIG_HOME"] = self.old_xdg
+        if self.old_localappdata is None:
+            os.environ.pop("LOCALAPPDATA", None)
+        else:
+            os.environ["LOCALAPPDATA"] = self.old_localappdata
         self.temp.cleanup()
 
     def test_create_add_move_and_persist(self):
