@@ -1,0 +1,3 @@
+# Optional high-quality realtime speech cleanup backend.
+# OxShift falls back to its built-in adaptive cleanup when unavailable.
+pywebrtc-audio>=0.1,<1
