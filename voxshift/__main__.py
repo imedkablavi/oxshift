@@ -8,6 +8,7 @@ from .collection_paging import install_collection_paging
 from .product_extras import install_product_extras
 from .product_ui import OxShiftProductUI
 from .profile_extras import install_profile_templates
+from .runtime_controls import install_runtime_controls
 from .rvc_adapters import ValidatedStreamingOnnxAdapter
 
 
@@ -33,6 +34,7 @@ def main() -> None:
     install_product_extras(app)
     install_profile_templates(app)
     install_collection_paging(app)
+    install_runtime_controls(app)
 
     if args.model_manifest:
         try:
