@@ -6,9 +6,17 @@ import json
 from pathlib import Path
 import platform
 import statistics
+import sys
 import threading
 import time
 import tracemalloc
+
+# Support direct execution from a checkout: `python scripts/stress_audio.py`.
+# Without this, Python places only scripts/ on sys.path and the checked-out
+# `voxshift` package cannot be imported in CI or fresh clones.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import numpy as np
 
