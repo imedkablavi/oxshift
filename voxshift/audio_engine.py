@@ -7,18 +7,18 @@ from typing import Callable
 
 import numpy as np
 
-from .cleanup import CleanupSettings, MicCleanup
 from .dsp import DSPSettings, VoiceDSP
 from .recorder import OutputRecorder
 from .rvc_runtime import RealtimeVoiceConverter
 from .soundboard import SoundboardEngine
+from .speech_processing import SpeechProcessingSettings, SpeechProcessor
 
 
 class AudioEngine:
     def __init__(self) -> None:
         self._stream = None
         self._settings = DSPSettings()
-        self._cleanup_settings = CleanupSettings()
+        self._cleanup_settings = SpeechProcessingSettings()
         self._lock = Lock()
         self.input_level = 0.0
         self.cleaned_level = 0.0
@@ -35,8 +35,12 @@ class AudioEngine:
         self.callback_peak_ms = 0.0
         self.xruns = 0
         self.pitch_backend = "unknown"
+        self.cleanup_backend = "builtin"
         self.cleanup_gain_db = 0.0
         self.noise_floor = 0.0
+        self.speech_probability = 0.0
+        self.cleanup_error = ""
+        self._far_reference = np.empty((0, 1), dtype=np.float32)
 
     @staticmethod
     def devices():
@@ -51,6 +55,21 @@ class AudioEngine:
         with self._lock:
             self._cleanup_settings = replace(self._cleanup_settings, **kwargs)
             self._cleanup_settings.sanitize()
+
+    def set_far_reference(self, block: np.ndarray | None) -> None:
+        """Provide speaker/far-end reference audio for future AEC use.
+
+        AEC is intentionally not fed the virtual-mic output automatically: that is not the
+        same signal as what the user's speakers actually reproduce. A monitor/output path can
+        call this with the true speaker reference when available.
+        """
+        if block is None:
+            self._far_reference = np.empty((0, 1), dtype=np.float32)
+            return
+        arr = np.asarray(block, dtype=np.float32)
+        if arr.ndim == 1:
+            arr = arr[:, None]
+        self._far_reference = np.ascontiguousarray(arr[:, :1], dtype=np.float32)
 
     def _set_status(self, text: str) -> None:
         self.last_status = text
@@ -87,7 +106,7 @@ class AudioEngine:
             self.soundboard.stop_all()
             self.soundboard.sample_rate = self.sample_rate
         self.recorder.sample_rate = self.sample_rate
-        cleanup = MicCleanup(sample_rate=self.sample_rate)
+        cleanup = SpeechProcessor(sample_rate=self.sample_rate)
         dsp = VoiceDSP(sample_rate=sample_rate, channels=1)
         self.pitch_backend = dsp.pitch_backend
         budget_ms = (blocksize / sample_rate) * 1000.0
@@ -106,10 +125,14 @@ class AudioEngine:
                 settings = self._settings
                 cleanup_settings = self._cleanup_settings
 
-            cleaned = cleanup.process(mono, cleanup_settings)
+            far = self._far_reference if self._far_reference.shape[0] == frames else None
+            cleaned = cleanup.process(mono, cleanup_settings, far_reference=far)
             self.cleaned_level = cleanup.output_rms
             self.cleanup_gain_db = cleanup.applied_gain_db
             self.noise_floor = cleanup.noise_floor
+            self.cleanup_backend = cleanup.backend
+            self.speech_probability = cleanup.speech_probability
+            self.cleanup_error = cleanup.last_error
 
             converted = self.voice_converter.process(cleaned)
             processed = dsp.process(converted, settings)
@@ -166,4 +189,5 @@ class AudioEngine:
         self.output_level = 0.0
         self.soundboard_level = 0.0
         self.callback_ms = 0.0
+        self._far_reference = np.empty((0, 1), dtype=np.float32)
         self._set_status("Stopped")
