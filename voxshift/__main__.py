@@ -4,6 +4,7 @@ import argparse
 import tkinter as tk
 from tkinter import messagebox
 
+from .collection_paging import install_collection_paging
 from .product_extras import install_product_extras
 from .product_ui import OxShiftProductUI
 from .profile_extras import install_profile_templates
@@ -31,6 +32,7 @@ def main() -> None:
     app = OxShiftProductUI(root)
     install_product_extras(app)
     install_profile_templates(app)
+    install_collection_paging(app)
 
     if args.model_manifest:
         try:
