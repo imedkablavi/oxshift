@@ -28,6 +28,15 @@ class AudioPreflightUI:
         if not (0 <= input_pos < len(self.app._inputs)) or not (0 <= output_pos < len(self.app._outputs)):
             return self._original_start()
 
+        # Start must calibrate the exact state visible in the UI. A user can choose a new
+        # voice/effect and press Start before the normal 700 ms autosave debounce fires.
+        # Commit the current UI snapshot first so the preflight and the stream use the same
+        # pitch/effect/cleanup/profile settings.
+        try:
+            self.app._autosave_now()
+        except Exception:
+            pass
+
         input_index = self.app._inputs[input_pos][0]
         output_index = self.app._outputs[output_pos][0]
         profile = self.app.profiles.active
