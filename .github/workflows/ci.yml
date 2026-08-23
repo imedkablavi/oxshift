@@ -22,5 +22,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      - name: Validate installer syntax
+        run: bash -n scripts/install_linux.sh scripts/linux_virtual_mic.sh
       - name: Run tests
         run: python -m unittest discover -s tests -v
