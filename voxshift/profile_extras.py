@@ -3,8 +3,9 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox
 
+from .dsp import DEFAULT_EFFECT_ORDER
 from .profile_templates import PROFILE_TEMPLATES, template_settings, unique_profile_name
-from .pro_ui import MUTED, PANEL, TEXT
+from .pro_ui import GOOD, MUTED, PANEL, TEXT
 
 
 class ProfileTemplateUI:
@@ -36,13 +37,13 @@ class ProfileTemplateUI:
     def create_from_template(self, template_name: str) -> None:
         existing = [profile.name for profile in self.app.profiles.items]
         name = unique_profile_name(existing, template_name)
-        profile = self.app.profiles.create(name, clone=self.app.profiles.active)
+        self.app.profiles.create(name, clone=self.app.profiles.active)
         settings = template_settings(template_name)
         profile = self.app.profiles.update_active(name=name, **settings)
         self.app._apply_profile(profile)
         self.app._render_profiles()
         if hasattr(self.app, "home_notice"):
-            self.app.home_notice.configure(text=f"Created profile '{name}'.")
+            self.app.home_notice.configure(text=f"Created profile '{name}'.", fg=GOOD)
 
     def reset_active(self) -> None:
         profile = self.app.profiles.active
@@ -54,32 +55,29 @@ class ProfileTemplateUI:
             return
         input_name = profile.input_device_name
         output_name = profile.output_device_name
-        clean = {
-            "voice": "Clean",
-            "gain_db": 0.0,
-            "wet": 1.0,
-            "gate_db": -55.0,
-            "pitch_semitones": 0.0,
-            "formant_color": 0.0,
-            "noise_suppression": 0.45,
-            "agc_enabled": True,
-            "agc_target_dbfs": -18.0,
-            "agc_max_gain_db": 12.0,
-            "cleanup_backend": "auto",
-            "echo_cancellation": False,
-            "effect_order": None,
-            "disabled_effects": [],
-            "soundboard_master": 0.85,
-            "soundboard_duck_db": 0.0,
-            "allow_overlap": True,
-            "sample_rate": 48000,
-            "blocksize": 256,
-            "input_device_name": input_name,
-            "output_device_name": output_name,
-        }
-        # Let StudioProfile.sanitize rebuild the canonical effect order when None is supplied.
-        clean["effect_order"] = list(self.app.effect_order.__class__()) if False else list(__import__("voxshift.dsp", fromlist=["DEFAULT_EFFECT_ORDER"]).DEFAULT_EFFECT_ORDER)
-        updated = self.app.profiles.update_active(**clean)
+        updated = self.app.profiles.update_active(
+            voice="Clean",
+            gain_db=0.0,
+            wet=1.0,
+            gate_db=-55.0,
+            pitch_semitones=0.0,
+            formant_color=0.0,
+            noise_suppression=0.45,
+            agc_enabled=True,
+            agc_target_dbfs=-18.0,
+            agc_max_gain_db=12.0,
+            cleanup_backend="auto",
+            echo_cancellation=False,
+            effect_order=list(DEFAULT_EFFECT_ORDER),
+            disabled_effects=[],
+            soundboard_master=0.85,
+            soundboard_duck_db=0.0,
+            allow_overlap=True,
+            sample_rate=48000,
+            blocksize=256,
+            input_device_name=input_name,
+            output_device_name=output_name,
+        )
         self.app._apply_profile(updated)
         self.app._render_profiles()
 
