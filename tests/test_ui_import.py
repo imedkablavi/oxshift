@@ -5,9 +5,12 @@ class UIImportTests(unittest.TestCase):
     def test_product_ui_imports_without_starting_tk(self):
         from voxshift.pro_ui import OxShiftStudioUI
         from voxshift.enhanced_ui import OxShiftEnhancedUI
+        from voxshift.advanced_ui import OxShiftAdvancedUI, WaveformEditor
 
         self.assertTrue(callable(OxShiftStudioUI))
         self.assertTrue(callable(OxShiftEnhancedUI))
+        self.assertTrue(callable(OxShiftAdvancedUI))
+        self.assertTrue(callable(WaveformEditor))
 
 
 if __name__ == "__main__":
