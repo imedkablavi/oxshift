@@ -2,27 +2,125 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "productize/**"]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.10", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install system audio dependencies
-        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
+          cache: pip
+      - name: Install Linux audio dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev libsndfile1
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Validate installer syntax
+      - name: Validate shell installer syntax
+        if: runner.os == 'Linux'
         run: bash -n scripts/install_linux.sh scripts/install_bazzite.sh scripts/linux_virtual_mic.sh
+      - name: Validate PowerShell helper syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/windows/setup_virtual_mic.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) { $errors | Format-List; exit 1 }
       - name: Run tests
         run: python -m unittest discover -s tests -v
+
+  realtime-contract:
+    name: Realtime benchmark and stress smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: sudo apt-get update && sudo apt-get install -y portaudio19-dev libsndfile1
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Offline callback-budget benchmark
+        run: python scripts/benchmark_audio.py --seconds 0.75 --json benchmark.json --markdown benchmark.md
+      - name: Accelerated leak/stress smoke
+        run: python scripts/stress_audio.py --duration 4 --no-pace --json stress.json --markdown stress.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: realtime-contract-report
+          path: |
+            benchmark.json
+            benchmark.md
+            stress.json
+            stress.md
+
+  package:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Linux packaging dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev libsndfile1
+      - name: Install application and packager
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pyinstaller>=6.10,<7"
+      - name: Build application
+        run: pyinstaller --noconfirm --clean packaging/oxshift.spec
+      - name: Archive Linux build
+        if: runner.os == 'Linux'
+        run: tar -czf OxShift-linux-x86_64.tar.gz -C dist OxShift
+      - name: Archive Windows portable build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/OxShift/* -DestinationPath OxShift-windows-x86_64-portable.zip -Force
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup 6 is not installed on the runner" }
+          & $iscc "/DAppVersion=0.3.0-alpha.1" packaging/windows/oxshift.iss
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: oxshift-linux-package
+          path: OxShift-linux-x86_64.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: oxshift-windows-package
+          path: |
+            OxShift-windows-x86_64-portable.zip
+            release/*.exe
