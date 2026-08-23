@@ -49,6 +49,10 @@ jobs:
             [ref]$errors
           ) | Out-Null
           if ($errors.Count -gt 0) { $errors | Format-List; exit 1 }
+      - name: Compile Python sources
+        run: python -m compileall -q voxshift scripts tests
+      - name: CLI import smoke
+        run: python -m voxshift --help
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
