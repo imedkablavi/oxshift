@@ -32,6 +32,8 @@ class StudioProfile:
     agc_enabled: bool = True
     agc_target_dbfs: float = -18.0
     agc_max_gain_db: float = 12.0
+    cleanup_backend: str = "auto"
+    echo_cancellation: bool = False
     effect_order: list[str] = field(default_factory=lambda: list(DEFAULT_EFFECT_ORDER))
     disabled_effects: list[str] = field(default_factory=list)
     soundboard_master: float = 0.85
@@ -52,6 +54,8 @@ class StudioProfile:
         self.noise_suppression = float(max(0.0, min(1.0, self.noise_suppression)))
         self.agc_target_dbfs = float(max(-30.0, min(-8.0, self.agc_target_dbfs)))
         self.agc_max_gain_db = float(max(0.0, min(24.0, self.agc_max_gain_db)))
+        self.cleanup_backend = self.cleanup_backend if self.cleanup_backend in {"auto", "builtin", "webrtc"} else "auto"
+        self.echo_cancellation = bool(self.echo_cancellation)
         clean_order: list[str] = []
         for name in list(self.effect_order or []):
             if name in VALID_EFFECTS and name not in clean_order:
@@ -70,7 +74,7 @@ class StudioProfile:
 
 
 class ProfileStore:
-    VERSION = 3
+    VERSION = 4
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (_config_dir() / "profiles.json")
