@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .ai_product_controls import install_ai_product_controls
+from .audio_performance_ui import install_audio_performance_ui
 from .collection_paging import install_collection_paging
 from .product_extras import install_product_extras
 from .product_ui import OxShiftProductUI
@@ -38,6 +39,7 @@ def main() -> None:
     install_collection_paging(app)
     install_runtime_controls(app)
     install_ai_product_controls(app)
+    install_audio_performance_ui(app)
     install_support_ui(app)
 
     if args.model_manifest:
