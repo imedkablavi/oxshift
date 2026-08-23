@@ -6,6 +6,7 @@ from tkinter import messagebox
 
 from .product_extras import install_product_extras
 from .product_ui import OxShiftProductUI
+from .profile_extras import install_profile_templates
 from .rvc_adapters import ValidatedStreamingOnnxAdapter
 
 
@@ -29,6 +30,7 @@ def main() -> None:
     root = tk.Tk()
     app = OxShiftProductUI(root)
     install_product_extras(app)
+    install_profile_templates(app)
 
     if args.model_manifest:
         try:
