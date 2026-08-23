@@ -6,7 +6,15 @@ import json
 from pathlib import Path
 import platform
 import statistics
+import sys
 import time
+
+# When executed as `python scripts/benchmark_audio.py`, Python puts `scripts/`
+# on sys.path rather than the repository root. Add the root explicitly so the
+# benchmark exercises the checked-out OxShift package in CI and local clones.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import numpy as np
 
@@ -31,7 +39,6 @@ def bench(sample_rate: int, blocksize: int, seconds: float) -> dict:
     t = np.arange(blocksize, dtype=np.float32) / sample_rate
     block = (0.12 * np.sin(2.0 * np.pi * 220.0 * t))[:, None].astype(np.float32)
 
-    # Warm caches/backends before recording timings.
     for _ in range(30):
         dsp.process(cleanup.process(block, cleanup_settings), dsp_settings)
 
