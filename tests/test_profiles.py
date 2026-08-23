@@ -26,6 +26,8 @@ class ProfileStoreTests(unittest.TestCase):
             soundboard_duck_db=8.0,
             noise_suppression=0.72,
             agc_enabled=False,
+            cleanup_backend="webrtc",
+            echo_cancellation=True,
             effect_order=["compressor", "pitch", "filter"],
             disabled_effects=["echo", "tremolo"],
             input_device_name="USB Mic",
@@ -41,6 +43,8 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(reloaded.active.voice, "Robot")
         self.assertAlmostEqual(reloaded.active.noise_suppression, 0.72)
         self.assertFalse(reloaded.active.agc_enabled)
+        self.assertEqual(reloaded.active.cleanup_backend, "webrtc")
+        self.assertTrue(reloaded.active.echo_cancellation)
         self.assertEqual(reloaded.active.effect_order[:3], ["compressor", "pitch", "filter"])
         self.assertEqual(set(reloaded.active.disabled_effects), {"echo", "tremolo"})
         self.assertEqual(reloaded.active.input_device_name, "USB Mic")
@@ -56,6 +60,7 @@ class ProfileStoreTests(unittest.TestCase):
             noise_suppression=9,
             agc_target_dbfs=-100,
             agc_max_gain_db=100,
+            cleanup_backend="invalid",
             effect_order=["made-up", "pitch", "pitch"],
             disabled_effects=["echo", "invalid"],
             soundboard_master=9,
@@ -70,6 +75,7 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(profile.noise_suppression, 1.0)
         self.assertEqual(profile.agc_target_dbfs, -30.0)
         self.assertEqual(profile.agc_max_gain_db, 24.0)
+        self.assertEqual(profile.cleanup_backend, "auto")
         self.assertEqual(profile.effect_order.count("pitch"), 1)
         self.assertNotIn("made-up", profile.effect_order)
         self.assertEqual(profile.disabled_effects, ["echo"])
