@@ -1,0 +1,46 @@
+name: Audio Soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: "Wall-clock soak duration (default 2 hours)"
+        required: false
+        default: "7200"
+      blocksize:
+        description: "Audio block size"
+        required: false
+        default: "256"
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    name: Multi-hour pipeline soak
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: sudo apt-get update && sudo apt-get install -y portaudio19-dev libsndfile1
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run paced stress/leak soak
+        run: >-
+          python scripts/stress_audio.py
+          --duration "${{ inputs.duration_seconds }}"
+          --blocksize "${{ inputs.blocksize }}"
+          --json stress.json
+          --markdown stress.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: multi-hour-audio-soak
+          path: |
+            stress.json
+            stress.md
