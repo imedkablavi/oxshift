@@ -5,7 +5,8 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .audio_probe import MicrophoneProbeResult, probe_microphone
-from .pro_ui import GOOD, MUTED, PANEL, TEXT, WARN
+from .hotkey_syntax import normalize_hotkey
+from .pro_ui import GOOD, MUTED, PANEL, PANEL_2, TEXT, WARN
 
 
 class ProductExtras:
@@ -16,6 +17,7 @@ class ProductExtras:
         self.root = app.root
         self._original_schedule_autosave = app._schedule_autosave
         self._original_refresh_hotkeys = app._refresh_hotkeys
+        self._original_render_sound_editor = app._render_sound_editor
         self._probe_running = False
         self._install_guards()
         self._install_header_actions()
@@ -25,9 +27,15 @@ class ProductExtras:
 
     def _install_guards(self) -> None:
         # Instance-level wrappers keep the underlying Alpha implementation intact while
-        # allowing a user-facing preference to control optional UX behavior.
+        # allowing user-facing preferences/extensions to control optional behavior.
         self.app._schedule_autosave = self._guarded_autosave
         self.app._refresh_hotkeys = self._guarded_refresh_hotkeys
+        self.app._render_sound_editor = self._render_sound_editor_with_metadata
+
+        if hasattr(self.app, "input_combo"):
+            self.app.input_combo.bind("<<ComboboxSelected>>", lambda _e: self.app._schedule_autosave(), add="+")
+        if hasattr(self.app, "output_combo"):
+            self.app.output_combo.bind("<<ComboboxSelected>>", lambda _e: self.app._schedule_autosave(), add="+")
 
     def _guarded_autosave(self) -> None:
         if self.app.ui_preferences.state.autosave_profile:
@@ -40,8 +48,6 @@ class ProductExtras:
             self.app.hotkeys.stop()
 
     def _install_header_actions(self) -> None:
-        # `title.master` is the existing top bar from OxShiftStudioUI. Adding the button here
-        # keeps Preferences reachable from every page without duplicating navigation chrome.
         top = self.app.title.master
         self.preferences_button = self.app._button(top, "Preferences", self.open_preferences)
         self.preferences_button.pack(side="right", padx=(0, 8))
@@ -71,6 +77,73 @@ class ProductExtras:
     def _apply_saved_preferences(self) -> None:
         if not self.app.ui_preferences.state.global_hotkeys_enabled:
             self.app.hotkeys.stop()
+
+    # ---------- Soundboard metadata / hotkey editor ----------
+
+    def _render_sound_editor_with_metadata(self, item_id: str | None) -> None:
+        self._original_render_sound_editor(item_id)
+        if not item_id or not hasattr(self.app, "sound_editor"):
+            return
+        item = self.app.engine.soundboard.get(item_id)
+        if item is None:
+            return
+
+        self._metadata_item_id = item.id
+        self.sound_name_var = tk.StringVar(master=self.root, value=item.name)
+        self.sound_category_var = tk.StringVar(master=self.root, value=item.category)
+        self.sound_hotkey_var = tk.StringVar(master=self.root, value=item.hotkey)
+
+        card = tk.Frame(self.app.sound_editor, bg=PANEL_2)
+        card.pack(fill="x", padx=14, pady=(0, 14))
+        tk.Label(card, text="Sound details", bg=PANEL_2, fg=TEXT, font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 5))
+        for row, (label, variable) in enumerate((
+            ("Display name", self.sound_name_var),
+            ("Category", self.sound_category_var),
+            ("Global hotkey", self.sound_hotkey_var),
+        ), start=1):
+            tk.Label(card, text=label, bg=PANEL_2, fg=MUTED).grid(row=row, column=0, sticky="w", padx=10, pady=4)
+            tk.Entry(card, textvariable=variable, bg=PANEL, fg=TEXT, insertbackground=TEXT, relief="flat").grid(row=row, column=1, sticky="ew", padx=10, pady=4)
+        card.grid_columnconfigure(1, weight=1)
+        tk.Label(card, text="Hotkey examples: <f8> or <ctrl>+<alt>+1. Leave empty to disable.", bg=PANEL_2, fg=MUTED, justify="left").grid(row=4, column=0, columnspan=2, sticky="w", padx=10, pady=(3, 7))
+        self.sound_details_status = tk.Label(card, text="", bg=PANEL_2, fg=MUTED, justify="left")
+        self.sound_details_status.grid(row=5, column=0, sticky="w", padx=10, pady=(0, 10))
+        self.app._button(card, "Save details", self._save_sound_details, primary=True).grid(row=5, column=1, sticky="e", padx=10, pady=(0, 10))
+
+    def _save_sound_details(self) -> None:
+        item = self.app.engine.soundboard.get(getattr(self, "_metadata_item_id", ""))
+        if item is None:
+            return
+        name = self.sound_name_var.get().strip()[:80]
+        category = self.sound_category_var.get().strip()[:40] or "General"
+        if not name:
+            self.sound_details_status.configure(text="Name cannot be empty.", fg=WARN)
+            return
+        try:
+            hotkey = normalize_hotkey(self.sound_hotkey_var.get())
+        except ValueError as exc:
+            self.sound_details_status.configure(text=str(exc), fg=WARN)
+            return
+
+        duplicate = next(
+            (
+                other
+                for other in self.app.engine.soundboard.items
+                if other.id != item.id and hotkey and str(other.hotkey).casefold() == hotkey.casefold()
+            ),
+            None,
+        )
+        if duplicate is not None:
+            self.sound_details_status.configure(text=f"Hotkey already belongs to '{duplicate.name}'.", fg=WARN)
+            return
+
+        self.app.engine.soundboard.update_item(item.id, name=name, category=category, hotkey=hotkey)
+        self.sound_hotkey_var.set(hotkey)
+        self.app._refresh_hotkeys()
+        self.app._render_sounds()
+        if hotkey and self.app.hotkeys.last_error:
+            self.sound_details_status.configure(text=f"Saved. Global listener unavailable: {self.app.hotkeys.last_error}", fg=WARN)
+        else:
+            self.sound_details_status.configure(text="Sound details saved.", fg=GOOD)
 
     # ---------- Preferences ----------
 
@@ -202,7 +275,10 @@ class ProductExtras:
 
     def _finish_probe(self, result: MicrophoneProbeResult | None, error: str | None) -> None:
         self._probe_running = False
-        if not self.probe_button.winfo_exists():
+        try:
+            if not self.probe_button.winfo_exists():
+                return
+        except tk.TclError:
             return
         self.probe_button.configure(state="normal", text="Test microphone")
         if error:
