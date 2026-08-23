@@ -7,7 +7,7 @@ hidden += collect_submodules("pynput")
 hidden += ["sounddevice", "tkinter", "tkinter.ttk"]
 
 analysis = Analysis(
-    ["voxshift/__main__.py"],
+    ["packaging/launcher.py"],
     pathex=["."],
     binaries=pedalboard_binaries,
     datas=pedalboard_datas,
