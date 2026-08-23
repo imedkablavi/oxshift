@@ -23,21 +23,25 @@ def preferences_path() -> Path:
 
 @dataclass(slots=True)
 class AppPreferences:
-    schema: int = 1
+    schema: int = 2
     onboarding_complete: bool = False
     last_page: str = "Home"
     window_geometry: str = "1320x820"
     compact_tips_dismissed: bool = False
+    autosave_profile: bool = True
+    restore_last_page: bool = True
+    global_hotkeys_enabled: bool = True
 
     def sanitize(self) -> None:
-        self.schema = 1
+        self.schema = 2
         self.onboarding_complete = bool(self.onboarding_complete)
         self.compact_tips_dismissed = bool(self.compact_tips_dismissed)
+        self.autosave_profile = bool(self.autosave_profile)
+        self.restore_last_page = bool(self.restore_last_page)
+        self.global_hotkeys_enabled = bool(self.global_hotkeys_enabled)
         if self.last_page not in VALID_PAGES:
             self.last_page = "Home"
         value = str(self.window_geometry or "1320x820").strip()
-        # Persist only the size, not screen coordinates. This avoids reopening off-screen
-        # after monitor/layout changes while still remembering the user's preferred size.
         size = value.split("+", 1)[0]
         try:
             width_raw, height_raw = size.lower().split("x", 1)
