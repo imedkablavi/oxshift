@@ -8,6 +8,8 @@ from .ai_product_controls import install_ai_product_controls
 from .audio_performance_ui import install_audio_performance_ui
 from .audio_preflight_ui import install_audio_preflight
 from .collection_paging import install_collection_paging
+from .console_skin import install_console_skin
+from .mixer_ui import install_mixer_ui
 from .product_extras import install_product_extras
 from .product_ui import OxShiftProductUI
 from .profile_extras import install_profile_templates
@@ -43,6 +45,9 @@ def main() -> None:
     install_audio_performance_ui(app)
     install_audio_preflight(app)
     install_support_ui(app)
+    install_mixer_ui(app)
+    # Apply the visual skin last so extension widgets receive the same console palette.
+    install_console_skin(app)
 
     if args.model_manifest:
         try:
