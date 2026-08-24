@@ -20,7 +20,7 @@ if [[ "${ID:-}" != "bazzite" && "${VARIANT_ID:-}" != *"bazzite"* && "${IMAGE_ID:
   warn "This installer is intended for Bazzite/Fedora Atomic hosts. Continuing anyway."
 fi
 
-command -v distrobox >/dev/null 2>&1 || fail "Distrobox was not found. Bazzite normally ships it; install/enable Distrobox from Bazzite Portal and retry."
+command -v distrobox >/dev/null 2>&1 || fail "Distrobox was not found. Enable/install Distrobox from Bazzite Portal and retry."
 command -v podman >/dev/null 2>&1 || fail "Podman was not found. It is required by Distrobox."
 
 FEDORA_VERSION="${VERSION_ID%%.*}"
@@ -40,8 +40,10 @@ else
 fi
 
 say "Installing runtime dependencies inside Distrobox (host remains immutable)"
-distrobox enter --name "$BOX" -- bash -lc \
-  'sudo dnf -y install python3 python3-devel python3-tkinter portaudio portaudio-devel pulseaudio-utils libsndfile libsndfile-devel gcc gcc-c++'
+# Never use a login shell here. The host HOME is shared into Distrobox, so ~/.bashrc may
+# prepend Linuxbrew Python or broken Homebrew paths. Pin /usr/bin/python3 from Fedora.
+distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+  'set -e; sudo dnf -y install python3 python3-devel python3-pip python3-tkinter portaudio portaudio-devel pulseaudio-utils libsndfile libsndfile-devel gcc gcc-c++'
 
 say "Copying OxShift into $DEST"
 mkdir -p "$DEST"
@@ -54,16 +56,29 @@ tar \
   -C "$ROOT" -cf - . | tar -C "$DEST" -xf -
 
 say "Creating isolated Python environment inside Distrobox"
-distrobox enter --name "$BOX" -- bash -lc \
-  "python3 -m venv '$DEST/.venv-bazzite' && '$DEST/.venv-bazzite/bin/python' -m pip install --upgrade pip setuptools wheel && '$DEST/.venv-bazzite/bin/python' -m pip install -r '$DEST/requirements.txt'"
+distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+  "set -e; rm -rf '$DEST/.venv-bazzite'; /usr/bin/python3 -m venv '$DEST/.venv-bazzite'; if ! '$DEST/.venv-bazzite/bin/python' -m pip --version >/dev/null 2>&1; then '$DEST/.venv-bazzite/bin/python' -m ensurepip --upgrade; fi; '$DEST/.venv-bazzite/bin/python' -m pip install --upgrade pip setuptools wheel; '$DEST/.venv-bazzite/bin/python' -m pip install -r '$DEST/requirements.txt'"
+
+if [[ -f "$DEST/requirements-hotkeys.txt" && "${OXSHIFT_SKIP_HOTKEYS:-0}" != "1" ]]; then
+  say "Trying optional global Soundboard hotkeys"
+  if ! distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+    "'$DEST/.venv-bazzite/bin/python' -m pip install -r '$DEST/requirements-hotkeys.txt'"; then
+    warn "Global hotkeys could not be installed. OxShift remains usable; Wayland may block global key capture anyway."
+  fi
+fi
 
 if [[ "${OXSHIFT_SKIP_WEBRTC:-0}" != "1" ]]; then
   say "Trying optional WebRTC speech backend inside Distrobox"
-  if ! distrobox enter --name "$BOX" -- bash -lc \
+  if ! distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
     "'$DEST/.venv-bazzite/bin/python' -m pip install pywebrtc-audio"; then
     warn "WebRTC backend could not be installed. Built-in mic cleanup remains available."
   fi
 fi
+
+# Verify the UI runtime before creating launchers so missing Tk/Python issues fail early.
+say "Verifying Python/Tk runtime"
+distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+  "'$DEST/.venv-bazzite/bin/python' -c 'import tkinter, numpy, sounddevice, pedalboard; print(\"OxShift runtime OK\")'"
 
 cat > "$DEST/run-bazzite.sh" <<EOF
 #!/usr/bin/env bash
@@ -77,7 +92,6 @@ mkdir -p "$BIN_DIR" "$APP_DIR"
 cat > "$BIN_DIR/oxshift" <<EOF
 #!/usr/bin/env bash
 set -e
-# Distrobox forwards the host desktop session (X11/Wayland) and PipeWire/Pulse sockets.
 exec distrobox enter --name "$BOX" -- "$DEST/run-bazzite.sh" "\$@"
 EOF
 chmod +x "$BIN_DIR/oxshift"
