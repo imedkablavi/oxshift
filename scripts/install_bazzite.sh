@@ -32,11 +32,13 @@ IMAGE="${OXSHIFT_DISTROBOX_IMAGE:-registry.fedoraproject.org/fedora:${FEDORA_VER
 say "Detected Bazzite/Fedora Atomic. Host package layering will NOT be used."
 say "Using Distrobox '$BOX' with image '$IMAGE'."
 
-if ! distrobox list --no-color 2>/dev/null | awk 'NR>1 {print $2}' | grep -Fxq "$BOX"; then
+# `distrobox list` uses pipe-delimited output on current releases; checking a fixed awk
+# column can mistake an existing box for a missing one. Normalize pipes and search tokens.
+if distrobox list --no-color 2>/dev/null | tr '|' ' ' | awk -v box="$BOX" '{for (i=1; i<=NF; i++) if ($i == box) found=1} END {exit !found}'; then
+  say "Reusing existing Distrobox '$BOX'"
+else
   say "Creating OxShift Distrobox"
   distrobox create --yes --name "$BOX" --image "$IMAGE"
-else
-  say "Reusing existing Distrobox '$BOX'"
 fi
 
 say "Installing runtime dependencies inside Distrobox (host remains immutable)"
