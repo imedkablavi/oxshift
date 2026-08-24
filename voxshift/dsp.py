@@ -8,10 +8,14 @@ import numpy as np
 from .voices import get_preset
 
 
+EQ_FREQUENCIES_HZ = (80.0, 250.0, 1000.0, 4000.0, 12000.0)
+EQ_FLAT_DB = (0.0, 0.0, 0.0, 0.0, 0.0)
+
 DEFAULT_EFFECT_ORDER = (
     "filter",
     "pitch",
     "timbre",
+    "equalizer",
     "drive",
     "modulation",
     "tremolo",
@@ -37,6 +41,8 @@ class DSPSettings:
     compressor: float | None = None
     pitch_semitones: float | None = None
     formant_color: float | None = None
+    eq_enabled: bool = True
+    eq_bands_db: tuple[float, float, float, float, float] = EQ_FLAT_DB
     effect_order: tuple[str, ...] | None = None
     disabled_effects: tuple[str, ...] = ()
 
@@ -64,6 +70,25 @@ class VoiceDSP:
         except Exception:
             self._pitch = None
 
+        self._eq_board = None
+        self._eq_filters: list[object] = []
+        self.eq_backend = "disabled"
+        try:
+            from pedalboard import HighShelfFilter, LowShelfFilter, PeakFilter, Pedalboard
+
+            self._eq_filters = [
+                LowShelfFilter(cutoff_frequency_hz=EQ_FREQUENCIES_HZ[0], gain_db=0.0, q=0.707),
+                PeakFilter(cutoff_frequency_hz=EQ_FREQUENCIES_HZ[1], gain_db=0.0, q=0.9),
+                PeakFilter(cutoff_frequency_hz=EQ_FREQUENCIES_HZ[2], gain_db=0.0, q=0.9),
+                PeakFilter(cutoff_frequency_hz=EQ_FREQUENCIES_HZ[3], gain_db=0.0, q=0.9),
+                HighShelfFilter(cutoff_frequency_hz=EQ_FREQUENCIES_HZ[4], gain_db=0.0, q=0.707),
+            ]
+            self._eq_board = Pedalboard(self._eq_filters)
+            self.eq_backend = "pedalboard"
+        except Exception:
+            self._eq_filters = []
+            self._eq_board = None
+
     @staticmethod
     def _db_to_amp(db: float) -> float:
         return float(10.0 ** (db / 20.0))
@@ -79,6 +104,11 @@ class VoiceDSP:
         if self._pitch is not None:
             try:
                 self._pitch.reset()
+            except Exception:
+                pass
+        if self._eq_board is not None:
+            try:
+                self._eq_board.reset()
             except Exception:
                 pass
 
@@ -132,6 +162,32 @@ class VoiceDSP:
             return (x + high * (0.9 * amount)).astype(np.float32, copy=False)
         dark = -amount
         return (x * (1.0 - 0.55 * dark) + low * (0.55 * dark)).astype(np.float32, copy=False)
+
+    def _equalizer(self, x: np.ndarray, gains_db: tuple[float, ...], enabled: bool) -> np.ndarray:
+        if not enabled or self._eq_board is None or len(self._eq_filters) != 5:
+            return x
+        gains = tuple(float(np.clip(value, -12.0, 12.0)) for value in gains_db[:5])
+        if len(gains) != 5 or all(abs(value) < 0.01 for value in gains):
+            return x
+        try:
+            for plugin, gain_db in zip(self._eq_filters, gains):
+                plugin.gain_db = gain_db
+            channels_first = np.ascontiguousarray(x.T, dtype=np.float32)
+            shaped = self._eq_board.process(
+                channels_first,
+                self.sample_rate,
+                buffer_size=max(128, x.shape[0]),
+                reset=False,
+            )
+            shaped = np.asarray(shaped, dtype=np.float32)
+            if shaped.ndim == 1:
+                shaped = shaped[None, :]
+            shaped = shaped.T
+            if shaped.shape == x.shape and np.all(np.isfinite(shaped)):
+                return shaped
+        except Exception:
+            pass
+        return x
 
     def _ring_mod(self, x: np.ndarray, hz: float) -> np.ndarray:
         if hz <= 0.0:
@@ -222,6 +278,8 @@ class VoiceDSP:
                 work = self._pitch_shift(work, pitch)
             elif effect == "timbre":
                 work = self._formant_color(work, formant_color)
+            elif effect == "equalizer":
+                work = self._equalizer(work, settings.eq_bands_db, settings.eq_enabled)
             elif effect == "drive" and drive > 1.001:
                 work = np.tanh(work * drive).astype(np.float32, copy=False)
             elif effect == "modulation":
