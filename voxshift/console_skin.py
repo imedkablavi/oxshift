@@ -31,7 +31,7 @@ TEXT_REPLACEMENTS = {
     "Live engine health": "Meters & engine",
     "Fast workflow": "Workflow",
     "Audio stays on this computer.": "Local audio engine",
-    "Voice transformation": "Voice strip",
+    "Voice transformation": "Voice shaping",
     "Microphone conditioning": "Input processing",
     "Custom effects chain": "Insert chain",
     "No local AI models yet": "No voice models loaded",
@@ -40,8 +40,9 @@ TEXT_REPLACEMENTS = {
 PAGE_TITLES = {
     "Home": "Console",
     "Voices": "Voices",
+    "Mixer": "Mixer / EQ",
     "Soundboard": "Soundboard",
-    "Studio": "Mixer / EQ",
+    "Studio": "Voice Lab",
     "Profiles": "Profiles",
     "AI Models": "Voice Models",
     "Audio": "Audio I/O",
@@ -75,8 +76,9 @@ class ConsoleSkin:
         labels = {
             "Home": "  ▣   Console",
             "Voices": "  ◉   Voices",
+            "Mixer": "  ≋   Mixer / EQ",
             "Soundboard": "  ▶   Soundboard",
-            "Studio": "  ≋   Mixer / EQ",
+            "Studio": "  ◫   Voice Lab",
             "Profiles": "  ▤   Profiles",
             "AI Models": "  ◇   Voice Models",
             "Audio": "  ⌁   Audio I/O",
@@ -87,11 +89,11 @@ class ConsoleSkin:
                 button.configure(text=text)
 
     def _apply_style(self) -> None:
-        self.app.root.configure(bg=COLOR_MAP["#090d16"])
+        self.app.root.configure(bg="#101214")
         style = ttk.Style()
         style.configure(
             "Ox.Horizontal.TProgressbar",
-            troughcolor=COLOR_MAP["#25292e"] if "#25292e" in COLOR_MAP else "#25292e",
+            troughcolor="#25292e",
             background="#58b57b",
             bordercolor="#25292e",
             lightcolor="#58b57b",
@@ -112,19 +114,19 @@ class ConsoleSkin:
             config = widget.configure()
         except tk.TclError:
             config = {}
-        pairs = {
-            "background": "background",
-            "foreground": "foreground",
-            "activebackground": "activebackground",
-            "activeforeground": "activeforeground",
-            "highlightbackground": "highlightbackground",
-            "highlightcolor": "highlightcolor",
-            "selectcolor": "selectcolor",
-            "troughcolor": "troughcolor",
-            "insertbackground": "insertbackground",
-        }
+        options = (
+            "background",
+            "foreground",
+            "activebackground",
+            "activeforeground",
+            "highlightbackground",
+            "highlightcolor",
+            "selectcolor",
+            "troughcolor",
+            "insertbackground",
+        )
         changes = {}
-        for option in pairs:
+        for option in options:
             if option not in config:
                 continue
             try:
