@@ -1,11 +1,90 @@
-import tkinter as tk
+from __future__ import annotations
 
-from .advanced_ui import OxShiftAdvancedUI
+import argparse
+import tkinter as tk
+from tkinter import messagebox
+
+from .ai_product_controls import install_ai_product_controls
+from .audio_performance_ui import install_audio_performance_ui
+from .audio_preflight_ui import install_audio_preflight
+from .collection_paging import install_collection_paging
+from .console_skin import install_console_skin
+from .mixer_ui import install_mixer_ui
+from .product_extras import install_product_extras
+from .product_ui import OxShiftProductUI
+from .profile_extras import install_profile_templates
+from .runtime_controls import install_runtime_controls
+from .rvc_adapters import ValidatedStreamingOnnxAdapter
+from .support_ui import install_support_ui
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="OxShift local-first realtime voice studio")
+    parser.add_argument(
+        "--model-manifest",
+        default="",
+        help="activate one validated oxshift-model.json bundle (never accepts a raw model path)",
+    )
+    parser.add_argument(
+        "--onnx-provider",
+        default="",
+        help="optional ONNX Runtime provider for a validated bundle, e.g. CPUExecutionProvider",
+    )
+    return parser
 
 
 def main() -> None:
+    args = build_parser().parse_args()
     root = tk.Tk()
-    OxShiftAdvancedUI(root)
+    app = OxShiftProductUI(root)
+    install_product_extras(app)
+    install_profile_templates(app)
+    install_collection_paging(app)
+    install_runtime_controls(app)
+    install_ai_product_controls(app)
+    install_audio_performance_ui(app)
+    install_audio_preflight(app)
+    install_support_ui(app)
+    install_mixer_ui(app)
+
+    # Mixer is injected after the base product shell exists, so restore it only after the
+    # extension has registered its page/nav entry.
+    if (
+        app.ui_preferences.state.onboarding_complete
+        and app.ui_preferences.state.restore_last_page
+        and app.ui_preferences.state.last_page == "Mixer"
+    ):
+        app._show("Mixer")
+
+    # Apply the visual skin last so extension widgets receive the same console palette.
+    install_console_skin(app)
+
+    if args.model_manifest:
+        try:
+            # Manifest/checksum/schema/graph validation happens here on the UI/startup thread,
+            # never inside PortAudio's realtime callback. Actual convert() calls run on the
+            # RealtimeVoiceConverter worker once the audio engine starts.
+            adapter = ValidatedStreamingOnnxAdapter.from_manifest(
+                args.model_manifest,
+                provider=args.onnx_provider or None,
+            )
+            if adapter.sample_rate != app.profiles.active.sample_rate:
+                adapter.close()
+                raise ValueError(
+                    f"validated model is {adapter.sample_rate} Hz but active profile is "
+                    f"{app.profiles.active.sample_rate} Hz; Alpha does not silently resample AI models"
+                )
+            app.engine.voice_converter.adapter = adapter
+            app.engine.voice_converter.config.enabled = True
+            if hasattr(app, "ai_product_controls"):
+                app.ai_product_controls._sync_status()
+        except Exception as exc:
+            messagebox.showerror(
+                "Validated model rejected",
+                f"OxShift did not activate the requested model.\n\n{exc}",
+                parent=root,
+            )
+
     root.mainloop()
 
 

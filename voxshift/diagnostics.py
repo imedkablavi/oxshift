@@ -17,12 +17,18 @@ class AudioHealth:
     callback_ms: float
     callback_peak_ms: float
     xruns: int
+    callback_errors: int
+    recovery_attempts: int
+    recovery_successes: int
     pitch_backend: str
+    cleanup_backend: str
     recorder_dropped_blocks: int
     vc_enabled: bool
     vc_ready: bool
     vc_inference_ms: float
+    vc_peak_inference_ms: float
     vc_underruns: int
+    vc_dropped_input_blocks: int
 
 
 def health_from_engine(engine) -> AudioHealth:
@@ -36,12 +42,18 @@ def health_from_engine(engine) -> AudioHealth:
         callback_ms=float(engine.callback_ms),
         callback_peak_ms=float(engine.callback_peak_ms),
         xruns=int(engine.xruns),
+        callback_errors=int(getattr(engine, "callback_errors", 0)),
+        recovery_attempts=int(getattr(engine, "recovery_attempts", 0)),
+        recovery_successes=int(getattr(engine, "recovery_successes", 0)),
         pitch_backend=str(engine.pitch_backend),
+        cleanup_backend=str(getattr(engine, "cleanup_backend", "unknown")),
         recorder_dropped_blocks=int(engine.recorder.state.dropped_blocks),
         vc_enabled=bool(vc.config.enabled),
         vc_ready=bool(vc.ready),
-        vc_inference_ms=float(getattr(stats, "inference_ms", 0.0) if stats else 0.0),
-        vc_underruns=int(getattr(stats, "underruns", 0) if stats else 0),
+        vc_inference_ms=float(getattr(stats, "last_inference_ms", 0.0) if stats else 0.0),
+        vc_peak_inference_ms=float(getattr(stats, "peak_inference_ms", 0.0) if stats else 0.0),
+        vc_underruns=int(getattr(stats, "output_underruns", 0) if stats else 0),
+        vc_dropped_input_blocks=int(getattr(stats, "dropped_input_blocks", 0) if stats else 0),
     )
 
 
@@ -58,7 +70,7 @@ def build_diagnostics(engine, devices: list[dict[str, Any]] | None = None) -> di
             }
         )
     return {
-        "schema": 1,
+        "schema": 2,
         "generated_unix": int(time.time()),
         "platform": {
             "system": platform.system(),

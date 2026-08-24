@@ -20,7 +20,7 @@ if [[ "${ID:-}" != "bazzite" && "${VARIANT_ID:-}" != *"bazzite"* && "${IMAGE_ID:
   warn "This installer is intended for Bazzite/Fedora Atomic hosts. Continuing anyway."
 fi
 
-command -v distrobox >/dev/null 2>&1 || fail "Distrobox was not found. Bazzite normally ships it; install/enable Distrobox from Bazzite Portal and retry."
+command -v distrobox >/dev/null 2>&1 || fail "Distrobox was not found. Enable/install Distrobox from Bazzite Portal and retry."
 command -v podman >/dev/null 2>&1 || fail "Podman was not found. It is required by Distrobox."
 
 FEDORA_VERSION="${VERSION_ID%%.*}"
@@ -32,16 +32,20 @@ IMAGE="${OXSHIFT_DISTROBOX_IMAGE:-registry.fedoraproject.org/fedora:${FEDORA_VER
 say "Detected Bazzite/Fedora Atomic. Host package layering will NOT be used."
 say "Using Distrobox '$BOX' with image '$IMAGE'."
 
-if ! distrobox list --no-color 2>/dev/null | awk 'NR>1 {print $2}' | grep -Fxq "$BOX"; then
+# `distrobox list` uses pipe-delimited output on current releases; checking a fixed awk
+# column can mistake an existing box for a missing one. Normalize pipes and search tokens.
+if distrobox list --no-color 2>/dev/null | tr '|' ' ' | awk -v box="$BOX" '{for (i=1; i<=NF; i++) if ($i == box) found=1} END {exit !found}'; then
+  say "Reusing existing Distrobox '$BOX'"
+else
   say "Creating OxShift Distrobox"
   distrobox create --yes --name "$BOX" --image "$IMAGE"
-else
-  say "Reusing existing Distrobox '$BOX'"
 fi
 
 say "Installing runtime dependencies inside Distrobox (host remains immutable)"
-distrobox enter --name "$BOX" -- bash -lc \
-  'sudo dnf -y install python3 python3-devel python3-tkinter portaudio portaudio-devel pulseaudio-utils libsndfile libsndfile-devel gcc gcc-c++'
+# Never use a login shell here. The host HOME is shared into Distrobox, so ~/.bashrc may
+# prepend Linuxbrew Python or broken Homebrew paths. Pin /usr/bin/python3 from Fedora.
+distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+  'set -e; sudo dnf -y install python3 python3-devel python3-pip python3-tkinter portaudio portaudio-devel pulseaudio-utils libsndfile libsndfile-devel gcc gcc-c++'
 
 say "Copying OxShift into $DEST"
 mkdir -p "$DEST"
@@ -54,15 +58,46 @@ tar \
   -C "$ROOT" -cf - . | tar -C "$DEST" -xf -
 
 say "Creating isolated Python environment inside Distrobox"
-distrobox enter --name "$BOX" -- bash -lc \
-  "python3 -m venv '$DEST/.venv-bazzite' && '$DEST/.venv-bazzite/bin/python' -m pip install --upgrade pip setuptools wheel && '$DEST/.venv-bazzite/bin/python' -m pip install -r '$DEST/requirements.txt'"
+distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+  "set -e; rm -rf '$DEST/.venv-bazzite'; /usr/bin/python3 -m venv '$DEST/.venv-bazzite'; if ! '$DEST/.venv-bazzite/bin/python' -m pip --version >/dev/null 2>&1; then '$DEST/.venv-bazzite/bin/python' -m ensurepip --upgrade; fi; '$DEST/.venv-bazzite/bin/python' -m pip install --upgrade pip setuptools wheel; '$DEST/.venv-bazzite/bin/python' -m pip install -r '$DEST/requirements.txt'"
+
+if [[ -f "$DEST/requirements-hotkeys.txt" && "${OXSHIFT_SKIP_HOTKEYS:-0}" != "1" ]]; then
+  say "Trying optional global Soundboard hotkeys"
+  if ! distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+    "'$DEST/.venv-bazzite/bin/python' -m pip install -r '$DEST/requirements-hotkeys.txt'"; then
+    warn "Global hotkeys could not be installed. OxShift remains usable; Wayland may block global key capture anyway."
+  fi
+fi
 
 if [[ "${OXSHIFT_SKIP_WEBRTC:-0}" != "1" ]]; then
   say "Trying optional WebRTC speech backend inside Distrobox"
-  if ! distrobox enter --name "$BOX" -- bash -lc \
+  if ! distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
     "'$DEST/.venv-bazzite/bin/python' -m pip install pywebrtc-audio"; then
     warn "WebRTC backend could not be installed. Built-in mic cleanup remains available."
   fi
+fi
+
+# Verify one module at a time and surface the actual stderr. Previous verification used one
+# combined import and could terminate under `set -e` without telling the user which runtime
+# component failed.
+say "Verifying Python/Tk runtime"
+RUNTIME_PY="$DEST/.venv-bazzite/bin/python"
+for module in tkinter _tkinter numpy sounddevice pedalboard; do
+  if output="$(distrobox enter --name "$BOX" -- "$RUNTIME_PY" -c "import $module; print('$module OK')" 2>&1)"; then
+    printf '[OxShift/Bazzite] %s\n' "$output"
+  else
+    printf '%s\n' "$output" >&2
+    fail "Runtime verification failed while importing '$module'. The launcher was not created."
+  fi
+done
+
+# Verify the installed checkout is importable from its real installation directory.
+if output="$(distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+  "cd '$DEST' && '$RUNTIME_PY' -m voxshift --help >/dev/null && printf 'OxShift CLI import OK'" 2>&1)"; then
+  printf '[OxShift/Bazzite] %s\n' "$output"
+else
+  printf '%s\n' "$output" >&2
+  fail "OxShift package import verification failed."
 fi
 
 cat > "$DEST/run-bazzite.sh" <<EOF
@@ -77,7 +112,6 @@ mkdir -p "$BIN_DIR" "$APP_DIR"
 cat > "$BIN_DIR/oxshift" <<EOF
 #!/usr/bin/env bash
 set -e
-# Distrobox forwards the host desktop session (X11/Wayland) and PipeWire/Pulse sockets.
 exec distrobox enter --name "$BOX" -- "$DEST/run-bazzite.sh" "\$@"
 EOF
 chmod +x "$BIN_DIR/oxshift"

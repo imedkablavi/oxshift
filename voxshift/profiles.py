@@ -28,6 +28,12 @@ class StudioProfile:
     gate_db: float = -55.0
     pitch_semitones: float = 0.0
     formant_color: float = 0.0
+    eq_enabled: bool = True
+    eq_80_db: float = 0.0
+    eq_250_db: float = 0.0
+    eq_1000_db: float = 0.0
+    eq_4000_db: float = 0.0
+    eq_12000_db: float = 0.0
     noise_suppression: float = 0.45
     agc_enabled: bool = True
     agc_target_dbfs: float = -18.0
@@ -51,6 +57,12 @@ class StudioProfile:
         self.gate_db = float(max(-90.0, min(-10.0, self.gate_db)))
         self.pitch_semitones = float(max(-12.0, min(12.0, self.pitch_semitones)))
         self.formant_color = float(max(-1.0, min(1.0, self.formant_color)))
+        self.eq_enabled = bool(self.eq_enabled)
+        self.eq_80_db = float(max(-12.0, min(12.0, self.eq_80_db)))
+        self.eq_250_db = float(max(-12.0, min(12.0, self.eq_250_db)))
+        self.eq_1000_db = float(max(-12.0, min(12.0, self.eq_1000_db)))
+        self.eq_4000_db = float(max(-12.0, min(12.0, self.eq_4000_db)))
+        self.eq_12000_db = float(max(-12.0, min(12.0, self.eq_12000_db)))
         self.noise_suppression = float(max(0.0, min(1.0, self.noise_suppression)))
         self.agc_target_dbfs = float(max(-30.0, min(-8.0, self.agc_target_dbfs)))
         self.agc_max_gain_db = float(max(0.0, min(24.0, self.agc_max_gain_db)))
@@ -74,7 +86,7 @@ class StudioProfile:
 
 
 class ProfileStore:
-    VERSION = 4
+    VERSION = 5
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (_config_dir() / "profiles.json")

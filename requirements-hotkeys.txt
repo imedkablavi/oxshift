@@ -1,0 +1,4 @@
+# Optional desktop-wide Soundboard hotkeys.
+# OxShift remains fully usable without this dependency, especially on Wayland sessions
+# where compositor policy may block global key capture.
+pynput>=1.7,<2
