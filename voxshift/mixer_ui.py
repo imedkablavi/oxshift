@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
 
-from .pro_ui import ACCENT, GOOD, MUTED, PANEL, PANEL_2, TEXT, WARN
+from .pro_ui import ACCENT, BG, GOOD, MUTED, PANEL, PANEL_2, SIDEBAR, TEXT, WARN
 
 
 EQ_PRESETS: dict[str, tuple[float, float, float, float, float]] = {
@@ -17,10 +16,10 @@ EQ_PRESETS: dict[str, tuple[float, float, float, float, float]] = {
 
 
 class MixerUI:
-    """Audio-console controls layered onto the Studio page.
+    """Dedicated realtime mixer/EQ page.
 
     The five-band EQ is real DSP. Voice gain/pitch and Soundboard level reuse the existing
-    realtime-safe controls so the mixer does not create a second source of truth.
+    controls so the mixer does not create a second source of truth.
     """
 
     def __init__(self, app) -> None:
@@ -38,7 +37,8 @@ class MixerUI:
         self._save_after: str | None = None
         self._original_apply_profile = app._apply_profile
         self._install_profile_hook()
-        self._build()
+        self._build_page()
+        self._install_navigation()
         self._sync_eq(save=False)
 
     def _install_profile_hook(self) -> None:
@@ -54,10 +54,20 @@ class MixerUI:
         sign = "+" if value > 0 else ""
         return f"{sign}{value:.1f}{suffix}"
 
-    def _vertical_fader(self, parent, title: str, variable: tk.Variable, lo: float, hi: float, command, *, suffix: str = ""):
+    def _vertical_fader(
+        self,
+        parent,
+        title: str,
+        variable: tk.Variable,
+        lo: float,
+        hi: float,
+        command,
+        *,
+        suffix: str = "",
+    ):
         strip = tk.Frame(parent, bg=PANEL_2, padx=8, pady=8)
         tk.Label(strip, text=title, bg=PANEL_2, fg=TEXT, font=("TkDefaultFont", 9, "bold")).pack(pady=(0, 4))
-        value_label = tk.Label(strip, bg=PANEL_2, fg=ACCENT, width=8, font=("TkDefaultFont", 8, "bold"))
+        value_label = tk.Label(strip, bg=PANEL_2, fg=ACCENT, width=9, font=("TkDefaultFont", 8, "bold"))
         value_label.pack(pady=(0, 3))
 
         def changed(_raw=None):
@@ -73,9 +83,9 @@ class MixerUI:
             orient="vertical",
             showvalue=False,
             resolution=0.5,
-            length=150,
+            length=190,
             width=15,
-            sliderlength=24,
+            sliderlength=26,
             command=changed,
             bg=PANEL_2,
             fg=TEXT,
@@ -88,87 +98,114 @@ class MixerUI:
         changed()
         return strip
 
-    def _build(self) -> None:
-        page = self.app.pages.get("Studio")
-        if page is None:
-            return
+    def _build_page(self) -> None:
+        page = tk.Frame(self.app.content, bg=BG)
+        page.grid(row=0, column=0, sticky="nsew")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(1, weight=1)
+        self.app.pages["Mixer"] = page
 
-        card = self.app._card(page)
-        card.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
-        page.grid_rowconfigure(2, weight=1)
-
-        header = tk.Frame(card, bg=PANEL)
-        header.pack(fill="x", padx=14, pady=(12, 4))
-        left = tk.Frame(header, bg=PANEL)
-        left.pack(side="left", fill="x", expand=True)
-        tk.Label(left, text="Mixer / Equalizer", bg=PANEL, fg=TEXT, font=("TkDefaultFont", 13, "bold")).pack(anchor="w")
+        header = tk.Frame(page, bg=BG)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        tk.Label(header, text="Realtime mixer", bg=BG, fg=TEXT, font=("TkDefaultFont", 15, "bold")).pack(side="left")
         tk.Label(
-            left,
-            text="Shape the microphone tone in real time. EQ changes tone; Pitch changes the actual perceived pitch.",
-            bg=PANEL,
+            header,
+            text="Voice bus  ·  5-band EQ  ·  Soundboard bus",
+            bg=BG,
             fg=MUTED,
-            justify="left",
-        ).pack(anchor="w", pady=(2, 0))
+            font=("TkDefaultFont", 9),
+        ).pack(side="left", padx=12)
         tk.Checkbutton(
             header,
             text="EQ enabled",
             variable=self.enabled,
             command=self._sync_eq,
-            bg=PANEL,
+            bg=BG,
             fg=TEXT,
             selectcolor=PANEL_2,
-            activebackground=PANEL,
+            activebackground=BG,
             activeforeground=TEXT,
-        ).pack(side="right", padx=4)
+        ).pack(side="right")
 
-        preset_row = tk.Frame(card, bg=PANEL)
-        preset_row.pack(fill="x", padx=10, pady=(4, 8))
-        tk.Label(preset_row, text="Tone presets", bg=PANEL, fg=MUTED).pack(side="left", padx=4)
+        console = self.app._card(page)
+        console.grid(row=1, column=0, sticky="nsew")
+        console.grid_columnconfigure(1, weight=1)
+        console.grid_rowconfigure(1, weight=1)
+
+        preset_row = tk.Frame(console, bg=PANEL)
+        preset_row.grid(row=0, column=0, columnspan=3, sticky="ew", padx=12, pady=(12, 4))
+        tk.Label(preset_row, text="TONE", bg=PANEL, fg=MUTED, font=("TkDefaultFont", 8, "bold")).pack(side="left", padx=(0, 8))
         for name in EQ_PRESETS:
             self.app._button(preset_row, name, lambda n=name: self.apply_preset(n), primary=name == "Flat").pack(side="left", padx=3)
-        self.reset_note = tk.Label(preset_row, text="", bg=PANEL, fg=GOOD)
-        self.reset_note.pack(side="right", padx=6)
+        self.eq_status = tk.Label(preset_row, text="", bg=PANEL, fg=GOOD, font=("TkDefaultFont", 8, "bold"))
+        self.eq_status.pack(side="right")
 
-        console = tk.Frame(card, bg=PANEL)
-        console.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-
-        voice_bus = tk.Frame(console, bg=PANEL_2, padx=10, pady=8)
-        voice_bus.pack(side="left", fill="y", padx=(0, 8))
-        tk.Label(voice_bus, text="VOICE BUS", bg=PANEL_2, fg=GOOD, font=("TkDefaultFont", 8, "bold")).pack(pady=(0, 6))
+        voice_bus = tk.Frame(console, bg=PANEL_2, padx=10, pady=10)
+        voice_bus.grid(row=1, column=0, sticky="ns", padx=(12, 6), pady=(6, 10))
+        tk.Label(voice_bus, text="VOICE BUS", bg=PANEL_2, fg=GOOD, font=("TkDefaultFont", 8, "bold")).pack(pady=(0, 8))
         self._vertical_fader(voice_bus, "Level", self.app.gain, -18, 18, self.app._sync_dsp, suffix=" dB").pack(side="left", fill="y", padx=3)
         self._vertical_fader(voice_bus, "Pitch", self.app.pitch, -12, 12, self.app._sync_dsp, suffix=" st").pack(side="left", fill="y", padx=3)
 
-        eq = tk.Frame(console, bg=PANEL_2, padx=10, pady=8)
-        eq.pack(side="left", fill="both", expand=True, padx=8)
-        tk.Label(eq, text="5-BAND VOICE EQ", bg=PANEL_2, fg=GOOD, font=("TkDefaultFont", 8, "bold")).pack(anchor="w", pady=(0, 6))
+        eq = tk.Frame(console, bg=PANEL_2, padx=10, pady=10)
+        eq.grid(row=1, column=1, sticky="nsew", padx=6, pady=(6, 10))
+        tk.Label(eq, text="5-BAND VOICE EQ", bg=PANEL_2, fg=GOOD, font=("TkDefaultFont", 8, "bold")).pack(anchor="w", pady=(0, 8))
         strips = tk.Frame(eq, bg=PANEL_2)
         strips.pack(fill="both", expand=True)
         labels = ("Bass\n80 Hz", "Low-mid\n250 Hz", "Mid\n1 kHz", "Presence\n4 kHz", "Air\n12 kHz")
         for label, variable in zip(labels, self.eq_vars):
-            self._vertical_fader(strips, label, variable, -12, 12, self._sync_eq, suffix=" dB").pack(side="left", fill="both", expand=True, padx=3)
+            self._vertical_fader(strips, label, variable, -12, 12, self._sync_eq, suffix=" dB").pack(
+                side="left", fill="both", expand=True, padx=3
+            )
 
-        board_bus = tk.Frame(console, bg=PANEL_2, padx=10, pady=8)
-        board_bus.pack(side="left", fill="y", padx=(8, 0))
-        tk.Label(board_bus, text="SOUNDBOARD", bg=PANEL_2, fg=WARN, font=("TkDefaultFont", 8, "bold")).pack(pady=(0, 6))
+        board_bus = tk.Frame(console, bg=PANEL_2, padx=10, pady=10)
+        board_bus.grid(row=1, column=2, sticky="ns", padx=(6, 12), pady=(6, 10))
+        tk.Label(board_bus, text="SOUNDBOARD", bg=PANEL_2, fg=WARN, font=("TkDefaultFont", 8, "bold")).pack(pady=(0, 8))
         self._vertical_fader(board_bus, "Level", self.app.sound_master, 0, 120, self.app._sync_board, suffix=" %").pack(side="left", fill="y", padx=3)
         self._vertical_fader(board_bus, "Duck", self.app.duck, 0, 24, self.app._sync_board, suffix=" dB").pack(side="left", fill="y", padx=3)
 
-        footer = tk.Frame(card, bg=PANEL)
-        footer.pack(fill="x", padx=14, pady=(0, 12))
+        footer = tk.Frame(console, bg=PANEL)
+        footer.grid(row=2, column=0, columnspan=3, sticky="ew", padx=14, pady=(0, 12))
         tk.Label(
             footer,
-            text="Tip: for a deeper voice use Deep EQ plus a small negative Pitch value. EQ alone cannot move the fundamental pitch.",
+            text="Deep voice: start with Deep, then lower Pitch by 1–3 st in small steps. EQ changes tone; Pitch changes actual perceived pitch.",
             bg=PANEL,
             fg=MUTED,
+            justify="left",
         ).pack(side="left")
-        self.eq_status = tk.Label(footer, text="", bg=PANEL, fg=GOOD, font=("TkDefaultFont", 8, "bold"))
-        self.eq_status.pack(side="right")
+        self.reset_note = tk.Label(footer, text="", bg=PANEL, fg=GOOD)
+        self.reset_note.pack(side="right")
 
-        if "Studio" in self.app.nav:
-            self.app.nav["Studio"].configure(text="  ≋   Mixer / EQ")
+        # Adding a new grid child can raise it; preserve the page the user was already viewing.
+        current = self.app.pages.get(self.app.current_page)
+        if current is not None:
+            current.tkraise()
+
+    def _install_navigation(self) -> None:
+        anchor = self.app.nav.get("Voices")
+        if anchor is None:
+            return
+        sidebar = anchor.master
+        button = tk.Button(
+            sidebar,
+            text="  ≋   Mixer / EQ",
+            anchor="w",
+            bg=SIDEBAR,
+            fg=MUTED,
+            activebackground=PANEL_2,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=11,
+            font=("TkDefaultFont", 10, "bold"),
+            command=lambda: self.app._show("Mixer"),
+        )
+        button.pack(fill="x", padx=10, pady=2, after=anchor)
+        self.app.nav["Mixer"] = button
 
     def values(self) -> tuple[float, float, float, float, float]:
-        return tuple(float(max(-12.0, min(12.0, var.get()))) for var in self.eq_vars)  # type: ignore[return-value]
+        values = [float(max(-12.0, min(12.0, var.get()))) for var in self.eq_vars]
+        return values[0], values[1], values[2], values[3], values[4]
 
     def _sync_eq(self, save: bool = True) -> None:
         gains = self.values()
