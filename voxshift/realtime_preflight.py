@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import statistics
 import time
 
 import numpy as np
@@ -39,6 +38,14 @@ def _profile_dsp_settings(profile) -> DSPSettings:
         gate_db=float(profile.gate_db),
         pitch_semitones=float(profile.pitch_semitones),
         formant_color=float(profile.formant_color),
+        eq_enabled=bool(profile.eq_enabled),
+        eq_bands_db=(
+            float(profile.eq_80_db),
+            float(profile.eq_250_db),
+            float(profile.eq_1000_db),
+            float(profile.eq_4000_db),
+            float(profile.eq_12000_db),
+        ),
         effect_order=tuple(profile.effect_order or ()),
         disabled_effects=tuple(profile.disabled_effects or ()),
     )
@@ -68,8 +75,8 @@ def measure_profile_headroom(
     """Measure local DSP callback headroom using the active profile outside PortAudio.
 
     The check intentionally includes microphone cleanup + the full local DSP/effect chain,
-    especially the native pitch stage that can be CPU-heavy. It excludes AI conversion because
-    AI inference already runs on a bounded worker queue outside the realtime callback.
+    including EQ and the native pitch stage that can be CPU-heavy. It excludes AI conversion
+    because AI inference already runs on a bounded worker queue outside the realtime callback.
     """
     sample_rate = int(profile.sample_rate)
     frames = int(blocksize if blocksize is not None else profile.blocksize)
@@ -88,7 +95,7 @@ def measure_profile_headroom(
         + 0.025 * np.sin(2.0 * np.pi * 3200.0 * t)
     )[:, None].astype(np.float32, copy=False)
 
-    # Warm native DSP/pitch state before collecting measurements.
+    # Warm native DSP/pitch/EQ state before collecting measurements.
     for _ in range(3):
         dsp.process(cleanup.process(source, cleanup_settings), dsp_settings)
 
