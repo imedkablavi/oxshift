@@ -75,10 +75,28 @@ if [[ "${OXSHIFT_SKIP_WEBRTC:-0}" != "1" ]]; then
   fi
 fi
 
-# Verify the UI runtime before creating launchers so missing Tk/Python issues fail early.
+# Verify one module at a time and surface the actual stderr. Previous verification used one
+# combined import and could terminate under `set -e` without telling the user which runtime
+# component failed.
 say "Verifying Python/Tk runtime"
-distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
-  "'$DEST/.venv-bazzite/bin/python' -c 'import tkinter, numpy, sounddevice, pedalboard; print(\"OxShift runtime OK\")'"
+RUNTIME_PY="$DEST/.venv-bazzite/bin/python"
+for module in tkinter _tkinter numpy sounddevice pedalboard; do
+  if output="$(distrobox enter --name "$BOX" -- "$RUNTIME_PY" -c "import $module; print('$module OK')" 2>&1)"; then
+    printf '[OxShift/Bazzite] %s\n' "$output"
+  else
+    printf '%s\n' "$output" >&2
+    fail "Runtime verification failed while importing '$module'. The launcher was not created."
+  fi
+done
+
+# Verify the installed checkout is importable from its real installation directory.
+if output="$(distrobox enter --name "$BOX" -- /bin/bash --noprofile --norc -c \
+  "cd '$DEST' && '$RUNTIME_PY' -m voxshift --help >/dev/null && printf 'OxShift CLI import OK'" 2>&1)"; then
+  printf '[OxShift/Bazzite] %s\n' "$output"
+else
+  printf '%s\n' "$output" >&2
+  fail "OxShift package import verification failed."
+fi
 
 cat > "$DEST/run-bazzite.sh" <<EOF
 #!/usr/bin/env bash
