@@ -30,7 +30,7 @@ install_system_deps() {
     sudo apt-get install -y python3 python3-venv python3-tk portaudio19-dev pulseaudio-utils libsndfile1
   elif command -v dnf >/dev/null 2>&1; then
     say "Installing Fedora audio dependencies"
-    sudo dnf install -y python3 python3-tkinter portaudio-devel pulseaudio-utils libsndfile
+    sudo dnf install -y python3 python3-pip python3-tkinter portaudio-devel pulseaudio-utils libsndfile
   elif command -v pacman >/dev/null 2>&1; then
     say "Installing Arch audio dependencies"
     sudo pacman -S --needed --noconfirm python tk portaudio libpulse libsndfile
@@ -43,7 +43,6 @@ install_system_deps
 
 say "Installing application into $DEST"
 mkdir -p "$DEST"
-# Copy the unpacked release while excluding local build/runtime state.
 tar \
   --exclude='.git' \
   --exclude='.venv' \
@@ -53,9 +52,20 @@ tar \
   -C "$ROOT" -cf - . | tar -C "$DEST" -xf -
 
 say "Creating Python environment"
+rm -rf "$DEST/.venv"
 "$PYTHON_BIN" -m venv "$DEST/.venv"
+if ! "$DEST/.venv/bin/python" -m pip --version >/dev/null 2>&1; then
+  "$DEST/.venv/bin/python" -m ensurepip --upgrade
+fi
 "$DEST/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
 "$DEST/.venv/bin/python" -m pip install -r "$DEST/requirements.txt"
+
+if [[ -f "$DEST/requirements-hotkeys.txt" && "${OXSHIFT_SKIP_HOTKEYS:-0}" != "1" ]]; then
+  say "Trying optional global Soundboard hotkeys"
+  if ! "$DEST/.venv/bin/python" -m pip install -r "$DEST/requirements-hotkeys.txt"; then
+    warn "Global hotkeys could not be installed. OxShift remains usable without them."
+  fi
+fi
 
 if [[ "${OXSHIFT_SKIP_WEBRTC:-0}" != "1" ]]; then
   say "Trying optional WebRTC speech backend"
@@ -63,6 +73,8 @@ if [[ "${OXSHIFT_SKIP_WEBRTC:-0}" != "1" ]]; then
     warn "WebRTC backend could not be installed. OxShift will use its built-in cleanup backend."
   fi
 fi
+
+"$DEST/.venv/bin/python" -c 'import tkinter, numpy, sounddevice, pedalboard; print("OxShift runtime OK")'
 
 mkdir -p "$BIN_DIR" "$APP_DIR"
 cat > "$BIN_DIR/oxshift" <<EOF
