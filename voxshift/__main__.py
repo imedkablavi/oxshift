@@ -46,6 +46,16 @@ def main() -> None:
     install_audio_preflight(app)
     install_support_ui(app)
     install_mixer_ui(app)
+
+    # Mixer is injected after the base product shell exists, so restore it only after the
+    # extension has registered its page/nav entry.
+    if (
+        app.ui_preferences.state.onboarding_complete
+        and app.ui_preferences.state.restore_last_page
+        and app.ui_preferences.state.last_page == "Mixer"
+    ):
+        app._show("Mixer")
+
     # Apply the visual skin last so extension widgets receive the same console palette.
     install_console_skin(app)
 
