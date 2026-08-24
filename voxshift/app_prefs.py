@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 
 
-VALID_PAGES = ("Home", "Voices", "Soundboard", "Studio", "Profiles", "AI Models", "Audio")
+VALID_PAGES = ("Home", "Voices", "Mixer", "Soundboard", "Studio", "Profiles", "AI Models", "Audio")
 
 
 def preferences_path() -> Path:
