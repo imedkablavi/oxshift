@@ -24,7 +24,7 @@ Profile writes use an atomic temporary-file replacement and value validation so 
 
 ### Real-time output recorder
 
-OxShift can record the final mixed output — processed microphone plus Soundboard — to mono PCM16 WAV.
+OxShift can record the final mixed output - processed microphone plus Soundboard - to mono PCM16 WAV.
 
 Recording is non-blocking for the device callback: audio blocks are copied into a bounded queue and disk I/O is handled by a worker thread. If storage becomes too slow, dropped recorder blocks are counted instead of allowing file writes to stall microphone processing.
 
